@@ -1,0 +1,427 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { useChats } from '../hooks/useChats';
+import { useMessages } from '../hooks/useMessages';
+import { useUsers } from '../hooks/useUsers';
+import { useMediaStorage } from '../hooks/useMediaStorage';
+import { listenToUserPresence } from '../hooks/usePresence';
+import { LogOut, Plus, Search, Send, User, Paperclip, Image as ImageIcon, FileText, MapPin, Mic, Square, Loader } from 'lucide-react';
+
+// Call Components
+import CallButton from '../components/CallButton';
+import IncomingCallModal from '../components/IncomingCallModal';
+import VideoCall from '../components/VideoCall';
+
+export default function ChatInterface() {
+  const { currentUser, logout } = useAuth();
+  const { chats, startChat } = useChats();
+  const { users } = useUsers();
+  const { uploadFile, uploading, progress } = useMediaStorage();
+  
+  const [activeChatId, setActiveChatId] = useState(null);
+  const [messageText, setMessageText] = useState('');
+  const [showUsersList, setShowUsersList] = useState(false);
+  const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [otherUserStatus, setOtherUserStatus] = useState(null);
+
+  const { messages, loading: msgsLoading, hasMore, loadMoreMessages, sendMessage } = useMessages(activeChatId);
+  
+  const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
+  const imageInputRef = useRef(null);
+  const docInputRef = useRef(null);
+  
+  // Audio Recording Refs
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, uploading]);
+
+  const handleScroll = (e) => {
+    if (e.target.scrollTop === 0 && hasMore && !msgsLoading) {
+      loadMoreMessages();
+    }
+  };
+
+  const handleSendMessage = async (e) => {
+    e.preventDefault();
+    if (!messageText.trim()) return;
+    await sendMessage(messageText, 'text');
+    setMessageText('');
+  };
+
+  const handleStartChat = async (otherUser) => {
+    const chatId = await startChat(otherUser);
+    if (chatId) {
+      setActiveChatId(chatId);
+      setShowUsersList(false);
+    }
+  };
+
+  // ----- MEDIA HANDLING -----
+  const handleFileUpload = async (e, type) => {
+    const file = e.target.files[0];
+    if (!file || !activeChatId) return;
+    setShowAttachMenu(false);
+    
+    try {
+      const url = await uploadFile(file, activeChatId, type);
+      if (url) {
+        await sendMessage(file.name || 'ملف مرفق', type, url);
+      }
+    } catch (error) {
+      alert("فشل رفع الملف");
+    }
+    e.target.value = ''; // reset input
+  };
+
+  const sendLocation = () => {
+    setShowAttachMenu(false);
+    if (!navigator.geolocation) {
+      alert("المتصفح لا يدعم تحديد الموقع");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        const mapsUrl = `https://www.google.com/maps?q=${latitude},${longitude}`;
+        await sendMessage(mapsUrl, 'location', mapsUrl);
+      },
+      () => alert("فشل الحصول على الموقع")
+    );
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+
+      mediaRecorderRef.current.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorderRef.current.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        // Stop all tracks to release microphone
+        stream.getTracks().forEach(track => track.stop());
+        
+        try {
+          // File constructor is not supported in all older browsers, but Blob is fine for Firebase
+          const file = new File([audioBlob], 'voice-note.webm', { type: 'audio/webm' });
+          const url = await uploadFile(file, activeChatId, 'audio');
+          if (url) {
+            await sendMessage('ملاحظة صوتية', 'audio', url);
+          }
+        } catch (err) {
+          alert("فشل إرسال الصوت");
+        }
+      };
+
+      mediaRecorderRef.current.start();
+      setIsRecording(true);
+    } catch (err) {
+      alert("الرجاء السماح بصلاحية المايكروفون");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  };
+
+  // ----- RENDER HELPERS -----
+  const getOtherParticipant = (chat) => {
+    if (!chat || !chat.participantDetails) return null;
+    const otherId = chat.participants.find(id => id !== currentUser.uid);
+    return chat.participantDetails[otherId];
+  };
+
+  const renderMessageContent = (msg, isMe) => {
+    switch (msg.type) {
+      case 'image':
+        return (
+          <div className="space-y-1">
+            <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer">
+              <img src={msg.mediaUrl} alt="attachment" className="max-w-[200px] sm:max-w-xs rounded-lg cursor-pointer hover:opacity-90 transition" />
+            </a>
+            <p className="text-sm px-1">{msg.text !== msg.mediaUrl ? msg.text : ''}</p>
+          </div>
+        );
+      case 'audio':
+        return (
+          <div className="flex flex-col">
+            <p className="text-xs mb-1 opacity-80">🎤 ملاحظة صوتية</p>
+            <audio src={msg.mediaUrl} controls className="h-8 max-w-[200px]" />
+          </div>
+        );
+      case 'document':
+        return (
+          <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:underline">
+            <FileText size={20} />
+            <span className="text-sm truncate max-w-[150px]">{msg.text}</span>
+          </a>
+        );
+      case 'location':
+        return (
+          <a href={msg.mediaUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 hover:underline text-blue-100">
+            <MapPin size={20} className={!isMe ? 'text-blue-500' : ''} />
+            <span className="text-sm">موقعي الجغرافي</span>
+          </a>
+        );
+      default:
+        return <p className="text-sm whitespace-pre-wrap break-words">{msg.text}</p>;
+    }
+  };
+
+  const activeChatDetails = chats.find(c => c.id === activeChatId);
+  const activeChatOtherUser = getOtherParticipant(activeChatDetails);
+
+  useEffect(() => {
+    if (activeChatOtherUser?.uid) {
+      const unsubscribe = listenToUserPresence(activeChatOtherUser.uid, (status) => {
+        setOtherUserStatus(status);
+      });
+      return () => unsubscribe();
+    } else {
+      setOtherUserStatus(null);
+    }
+  }, [activeChatOtherUser?.uid]);
+
+  const renderStatus = () => {
+    if (!otherUserStatus) return <p className="text-xs text-gray-400">غير متصل</p>;
+    if (otherUserStatus.isOnline) return <p className="text-xs text-green-500">متصل الآن</p>;
+    
+    // Format last seen
+    const date = new Date(otherUserStatus.lastSeen);
+    const now = new Date();
+    const isToday = date.getDate() === now.getDate() && date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+    const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    
+    return <p className="text-xs text-gray-500">آخر ظهور: {isToday ? 'اليوم' : date.toLocaleDateString()} {timeStr}</p>;
+  };
+
+  return (
+    <div className="flex h-screen bg-gray-100 font-sans dir-rtl text-right" dir="rtl">
+      
+      {/* Hidden File Inputs */}
+      <input type="file" ref={imageInputRef} className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, 'image')} />
+      <input type="file" ref={docInputRef} className="hidden" accept=".pdf,.doc,.docx,.txt" onChange={(e) => handleFileUpload(e, 'document')} />
+
+      {/* Call Modals & Overlays */}
+      <IncomingCallModal />
+      <VideoCall />
+
+      {/* Sidebar */}
+      <aside className="w-1/3 max-w-sm bg-white border-l border-gray-200 flex flex-col relative z-20">
+        <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+          <div className="flex items-center gap-3">
+            <img 
+              src={currentUser?.photoURL || currentUser?.avatar || `https://ui-avatars.com/api/?name=${currentUser?.email?.charAt(0)}`} 
+              alt="avatar" 
+              className="w-10 h-10 rounded-full object-cover"
+            />
+            <h2 className="text-xl font-semibold text-gray-800">المحادثات</h2>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => setShowUsersList(!showUsersList)} className="p-2 text-gray-600 hover:bg-gray-200 rounded-full transition" title="محادثة جديدة">
+              <Plus size={20} />
+            </button>
+            <button onClick={logout} className="p-2 text-red-500 hover:bg-red-50 rounded-full transition" title="تسجيل الخروج">
+              <LogOut size={20} />
+            </button>
+          </div>
+        </div>
+
+        {showUsersList ? (
+          <div className="flex-1 overflow-y-auto bg-white absolute inset-0 top-[73px] z-10 w-full h-full">
+            <div className="p-4 bg-gray-50 border-b">
+              <div className="relative">
+                <Search className="absolute right-3 top-3 text-gray-400" size={18} />
+                <input type="text" placeholder="ابحث عن مستخدم..." className="w-full bg-white border border-gray-300 rounded-full py-2 pr-10 pl-4 focus:outline-none focus:border-blue-500" />
+              </div>
+            </div>
+            <div className="p-2">
+              <h3 className="text-sm font-semibold text-gray-500 px-2 py-2">المستخدمون المتاحون</h3>
+              {users.map(u => (
+                <div key={u.uid} onClick={() => handleStartChat(u)} className="flex items-center p-3 hover:bg-gray-100 rounded-lg cursor-pointer transition">
+                  <img src={u.avatar} alt={u.name} className="w-12 h-12 rounded-full object-cover" />
+                  <div className="mr-4 flex-1">
+                    <h3 className="font-semibold text-gray-900">{u.name}</h3>
+                    <p className="text-xs text-gray-500">{u.email}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto p-2 space-y-1">
+            {chats.map(chat => {
+              const otherUser = getOtherParticipant(chat);
+              const isActive = chat.id === activeChatId;
+              const timeString = chat.lastMessageAt?.toDate().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) || '';
+              return (
+                <div key={chat.id} onClick={() => setActiveChatId(chat.id)} className={`flex items-center p-3 rounded-lg cursor-pointer transition ${isActive ? 'bg-blue-50' : 'hover:bg-gray-100'}`}>
+                  <img src={otherUser?.avatar || 'https://via.placeholder.com/150'} alt="avatar" className="w-12 h-12 rounded-full object-cover flex-shrink-0" />
+                  <div className="mr-4 flex-1 min-w-0">
+                    <div className="flex justify-between items-baseline mb-1">
+                      <h3 className="font-semibold text-gray-900 truncate">{otherUser?.name || 'مستخدم'}</h3>
+                      <span className="text-xs text-gray-500 flex-shrink-0 mr-2">{timeString}</span>
+                    </div>
+                    <p className="text-sm text-gray-600 truncate">{chat.lastMessage || 'بدأ محادثة جديدة'}</p>
+                  </div>
+                </div>
+              )
+            })}
+            {chats.length === 0 && (
+              <div className="text-center p-8 text-gray-500">
+                <p>لا توجد محادثات.</p>
+                <button onClick={() => setShowUsersList(true)} className="mt-2 text-blue-500 hover:underline">ابدأ محادثة جديدة</button>
+              </div>
+            )}
+          </div>
+        )}
+      </aside>
+
+      {/* Main Chat Area */}
+      <main className="flex-1 flex flex-col bg-[#efeae2] relative overflow-hidden">
+        {activeChatId ? (
+          <>
+            <header className="p-4 bg-gray-50 border-b border-gray-200 flex items-center justify-between z-10">
+              <div className="flex items-center">
+                <img src={activeChatOtherUser?.avatar || 'https://via.placeholder.com/150'} alt="avatar" className="w-10 h-10 rounded-full object-cover" />
+                <div className="mr-4">
+                  <h2 className="font-semibold text-gray-800">{activeChatOtherUser?.name}</h2>
+                  {renderStatus()}
+                </div>
+              </div>
+              
+              {/* Call Buttons */}
+              <CallButton 
+                targetUserId={activeChatOtherUser?.uid || activeChatDetails.participants.find(id => id !== currentUser.uid)}
+                roomId={activeChatId}
+                targetUserName={activeChatOtherUser?.name}
+              />
+            </header>
+
+            <div ref={messagesContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 space-y-4">
+              {hasMore && (
+                <div className="text-center py-2">
+                  <span className="text-xs bg-white text-gray-500 px-3 py-1 rounded-full shadow-sm cursor-pointer hover:bg-gray-50" onClick={loadMoreMessages}>
+                    {msgsLoading ? 'جاري التحميل...' : 'تحميل رسائل أقدم'}
+                  </span>
+                </div>
+              )}
+              
+              {messages.map((msg, idx) => {
+                const isMe = msg.senderId === currentUser.uid;
+                const timeString = msg.timestamp?.toDate().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) || '';
+                
+                return (
+                  <div key={msg.id || idx} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`p-3 rounded-lg max-w-[75%] md:max-w-md relative ${isMe ? 'bg-blue-500 text-white rounded-tr-none' : 'bg-white text-gray-800 shadow-sm rounded-tl-none'}`}>
+                      {renderMessageContent(msg, isMe)}
+                      <div className={`text-[10px] mt-1 text-left ${isMe ? 'text-blue-200' : 'text-gray-400'}`}>
+                        {timeString}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              
+              {uploading && (
+                <div className="flex justify-end">
+                  <div className="p-3 rounded-lg bg-blue-100 text-blue-800 rounded-tr-none flex items-center gap-2">
+                    <Loader size={16} className="animate-spin" />
+                    <span className="text-sm">جاري الإرسال ({Math.round(progress)}%)</span>
+                  </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            <footer className="p-4 bg-gray-50 flex items-center relative z-20">
+              {showAttachMenu && (
+                <div className="absolute bottom-16 right-4 bg-white border border-gray-200 shadow-xl rounded-2xl p-2 flex flex-col gap-2 z-30 w-48">
+                  <button onClick={() => imageInputRef.current.click()} className="flex items-center gap-3 p-2 hover:bg-gray-100 rounded-lg transition text-gray-700 w-full">
+                    <div className="bg-purple-100 p-2 rounded-full text-purple-600"><ImageIcon size={18} /></div>
+                    <span>صورة</span>
+                  </button>
+                  <button onClick={() => docInputRef.current.click()} className="flex items-center gap-3 p-2 hover:bg-gray-100 rounded-lg transition text-gray-700 w-full">
+                    <div className="bg-blue-100 p-2 rounded-full text-blue-600"><FileText size={18} /></div>
+                    <span>مستند</span>
+                  </button>
+                  <button onClick={sendLocation} className="flex items-center gap-3 p-2 hover:bg-gray-100 rounded-lg transition text-gray-700 w-full">
+                    <div className="bg-green-100 p-2 rounded-full text-green-600"><MapPin size={18} /></div>
+                    <span>موقع جغرافي</span>
+                  </button>
+                </div>
+              )}
+
+              <button 
+                type="button" 
+                onClick={() => setShowAttachMenu(!showAttachMenu)}
+                className={`p-2 transition rounded-full ${showAttachMenu ? 'bg-gray-200 text-gray-800' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'}`}
+              >
+                <Paperclip size={24} />
+              </button>
+              
+              <form onSubmit={handleSendMessage} className="flex-1 flex items-center mx-2 relative">
+                <input 
+                  type="text" 
+                  value={messageText}
+                  onChange={(e) => setMessageText(e.target.value)}
+                  placeholder="اكتب رسالة..." 
+                  className="flex-1 border border-gray-300 rounded-full py-2.5 px-4 pr-12 focus:outline-none focus:border-blue-500 bg-white"
+                  disabled={isRecording || uploading}
+                />
+                
+                {/* Voice Record Button - Inside input if text is empty */}
+                {!messageText.trim() && (
+                  <button 
+                    type="button"
+                    onMouseDown={startRecording}
+                    onMouseUp={stopRecording}
+                    onMouseLeave={stopRecording}
+                    onTouchStart={startRecording}
+                    onTouchEnd={stopRecording}
+                    className={`absolute right-2 p-1.5 rounded-full transition ${isRecording ? 'bg-red-500 text-white animate-pulse' : 'text-gray-400 hover:text-gray-600'}`}
+                  >
+                    {isRecording ? <Square size={20} /> : <Mic size={20} />}
+                  </button>
+                )}
+                
+                {messageText.trim() && (
+                  <button 
+                    type="submit" 
+                    className="absolute right-1 bg-blue-600 text-white rounded-full p-2 w-9 h-9 flex items-center justify-center hover:bg-blue-700 transition rtl:-scale-x-100"
+                  >
+                    <Send size={16} />
+                  </button>
+                )}
+              </form>
+            </footer>
+          </>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center text-gray-500">
+            <div className="w-32 h-32 bg-gray-200 rounded-full flex items-center justify-center mb-6">
+               <User size={64} className="text-gray-400" />
+            </div>
+            <h2 className="text-2xl font-semibold text-gray-700 mb-2">تطبيق الدردشة</h2>
+            <p>اختر محادثة من القائمة للبدء</p>
+          </div>
+        )}
+      </main>
+      
+      {/* Click outside attachment menu overlay */}
+      {showAttachMenu && (
+        <div className="fixed inset-0 z-10" onClick={() => setShowAttachMenu(false)}></div>
+      )}
+    </div>
+  );
+}

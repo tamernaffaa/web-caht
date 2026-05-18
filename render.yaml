@@ -2,6 +2,7 @@ services:
   - type: web
     name: web-chat-signaling-server
     env: node
+    rootDir: server
     buildCommand: npm install
     startCommand: npm start
     envVars:

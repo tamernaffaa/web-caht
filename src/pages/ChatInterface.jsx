@@ -4,8 +4,8 @@ import { useChats } from '../hooks/useChats';
 import { useMessages } from '../hooks/useMessages';
 import { useUsers } from '../hooks/useUsers';
 import { useMediaStorage } from '../hooks/useMediaStorage';
-import { listenToUserPresence } from '../hooks/usePresence';
-import { LogOut, Plus, Search, Send, User, Paperclip, Image as ImageIcon, FileText, MapPin, Mic, Square, Loader, ArrowRight } from 'lucide-react';
+import { listenToUserPresence, listenToTyping, setTypingStatus } from '../hooks/usePresence';
+import { LogOut, Plus, Search, Send, User, Paperclip, Image as ImageIcon, FileText, MapPin, Mic, Square, Loader, ArrowRight, Reply, Pencil, Trash2, X, Check, CheckCheck } from 'lucide-react';
 
 // Call Components
 import CallButton from '../components/CallButton';
@@ -24,6 +24,13 @@ export default function ChatInterface() {
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [otherUserStatus, setOtherUserStatus] = useState(null);
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [editingMessageId, setEditingMessageId] = useState(null);
+  const [otherUserTyping, setOtherUserTyping] = useState(false);
+  const [actionMenuMessage, setActionMenuMessage] = useState(null);
+  const [swipePreview, setSwipePreview] = useState({ messageId: null, offsetX: 0 });
+  const [swipeToast, setSwipeToast] = useState('');
+  const [swipeToastVisible, setSwipeToastVisible] = useState(false);
 
   const fallbackAvatar = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%239ca3af'%3E%3Cpath d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3E%3C/svg%3E";
   const handleImageError = (e) => {
@@ -31,7 +38,17 @@ export default function ChatInterface() {
     e.target.src = fallbackAvatar;
   };
 
-  const { messages, loading: msgsLoading, hasMore, loadMoreMessages, sendMessage } = useMessages(activeChatId);
+  const {
+    messages,
+    loading: msgsLoading,
+    hasMore,
+    loadMoreMessages,
+    sendMessage,
+    retryMessage,
+    editMessage,
+    deleteMessage,
+    markAsRead
+  } = useMessages(activeChatId);
   
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
@@ -41,6 +58,9 @@ export default function ChatInterface() {
   // Audio Recording Refs
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const typingTimeoutRef = useRef(null);
+  const longPressTimerRef = useRef(null);
+  const swipeGestureRef = useRef({ messageId: null, startX: 0, startY: 0, triggered: false });
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -55,8 +75,136 @@ export default function ChatInterface() {
   const handleSendMessage = async (e) => {
     e.preventDefault();
     if (!messageText.trim()) return;
-    await sendMessage(messageText, 'text');
+
+    if (editingMessageId) {
+      await editMessage(editingMessageId, messageText);
+      setEditingMessageId(null);
+      setReplyingTo(null);
+      setMessageText('');
+      if (activeChatId && currentUser?.uid) {
+        setTypingStatus(activeChatId, currentUser.uid, false).catch(() => {});
+      }
+      return;
+    }
+
+    await sendMessage(messageText, 'text', null, { replyTo: replyingTo });
     setMessageText('');
+    setReplyingTo(null);
+    if (activeChatId && currentUser?.uid) {
+      setTypingStatus(activeChatId, currentUser.uid, false).catch(() => {});
+    }
+  };
+
+  const handleMessageInputChange = (value) => {
+    setMessageText(value);
+    if (!activeChatId || !currentUser?.uid) return;
+
+    setTypingStatus(activeChatId, currentUser.uid, value.trim().length > 0).catch(() => {});
+
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    typingTimeoutRef.current = setTimeout(() => {
+      setTypingStatus(activeChatId, currentUser.uid, false).catch(() => {});
+    }, 1200);
+  };
+
+  const toReplyPreview = (msg) => ({
+    messageId: msg.id,
+    senderId: msg.senderId,
+    textPreview: msg.isDeleted ? 'تم حذف هذه الرسالة' : (msg.text || '[مرفق]'),
+    type: msg.type || 'text'
+  });
+
+  const handleReplyToMessage = (msg) => {
+    setEditingMessageId(null);
+    setReplyingTo(toReplyPreview(msg));
+    setActionMenuMessage(null);
+  };
+
+  const handleEditMessage = (msg) => {
+    setReplyingTo(null);
+    setEditingMessageId(msg.id);
+    setMessageText(msg.text || '');
+    setActionMenuMessage(null);
+  };
+
+  const handleDeleteMessage = async (msg) => {
+    await deleteMessage(msg.id);
+    if (editingMessageId === msg.id) {
+      setEditingMessageId(null);
+      setMessageText('');
+    }
+    setActionMenuMessage(null);
+  };
+
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const handleMessageTouchStart = (msg) => {
+    clearLongPressTimer();
+    longPressTimerRef.current = setTimeout(() => {
+      setActionMenuMessage(msg);
+    }, 450);
+  };
+
+  const handleMessageTouchEnd = () => {
+    clearLongPressTimer();
+  };
+
+  const handleSwipeStart = (event, msg) => {
+    const touch = event.touches?.[0];
+    if (!touch) return;
+    setSwipePreview({ messageId: msg.id, offsetX: 0 });
+    swipeGestureRef.current = {
+      messageId: msg.id,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      triggered: false
+    };
+  };
+
+  const handleSwipeMove = (event, msg) => {
+    const touch = event.touches?.[0];
+    if (!touch) return;
+
+    const gesture = swipeGestureRef.current;
+    if (!gesture || gesture.messageId !== msg.id || gesture.triggered) return;
+
+    const deltaX = touch.clientX - gesture.startX;
+    const deltaY = touch.clientY - gesture.startY;
+    const horizontal = Math.abs(deltaX);
+    const vertical = Math.abs(deltaY);
+    const limitedOffset = Math.max(-72, Math.min(72, deltaX));
+
+    if (horizontal > vertical) {
+      setSwipePreview({ messageId: msg.id, offsetX: limitedOffset });
+    }
+
+    // If user is swiping horizontally, prevent long-press from opening.
+    if (horizontal > 18 && horizontal > vertical) {
+      clearLongPressTimer();
+    }
+
+    if (horizontal > 90 && horizontal > vertical) {
+      swipeGestureRef.current.triggered = true;
+      handleReplyToMessage(msg);
+      setActionMenuMessage(null);
+      setSwipePreview({ messageId: null, offsetX: 0 });
+      setSwipeToast('تم اختيار الرسالة للرد');
+      if (navigator.vibrate) navigator.vibrate(10);
+    }
+  };
+
+  const handleSwipeEnd = () => {
+    setSwipePreview({ messageId: null, offsetX: 0 });
+    swipeGestureRef.current = { messageId: null, startX: 0, startY: 0, triggered: false };
+    clearLongPressTimer();
   };
 
   const handleStartChat = async (otherUser) => {
@@ -149,6 +297,10 @@ export default function ChatInterface() {
   };
 
   const renderMessageContent = (msg, isMe) => {
+    if (msg.isDeleted) {
+      return <p className="text-sm italic opacity-80">{isMe ? 'حذفت هذه الرسالة' : 'رسالة محذوفة'}</p>;
+    }
+
     switch (msg.type) {
       case 'image':
         return (
@@ -199,7 +351,59 @@ export default function ChatInterface() {
     }
   }, [activeChatOtherUser?.uid]);
 
+  useEffect(() => {
+    if (!activeChatId || !activeChatOtherUser?.uid) {
+      setOtherUserTyping(false);
+      return;
+    }
+
+    const unsubscribe = listenToTyping(activeChatId, activeChatOtherUser.uid, (isTyping) => {
+      setOtherUserTyping(isTyping);
+    });
+
+    return () => unsubscribe();
+  }, [activeChatId, activeChatOtherUser?.uid]);
+
+  useEffect(() => {
+    if (!activeChatId || !currentUser?.uid) return;
+    markAsRead();
+  }, [activeChatId, currentUser?.uid, messages.length]);
+
+  useEffect(() => {
+    if (!swipeToast) return;
+
+    setSwipeToastVisible(true);
+
+    const hideTimer = setTimeout(() => {
+      setSwipeToastVisible(false);
+    }, 1200);
+
+    const clearTimer = setTimeout(() => {
+      setSwipeToast('');
+    }, 1450);
+
+    return () => {
+      clearTimeout(hideTimer);
+      clearTimeout(clearTimer);
+    };
+  }, [swipeToast]);
+
+  useEffect(() => {
+    return () => {
+      clearLongPressTimer();
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      setSwipePreview({ messageId: null, offsetX: 0 });
+      swipeGestureRef.current = { messageId: null, startX: 0, startY: 0, triggered: false };
+      if (activeChatId && currentUser?.uid) {
+        setTypingStatus(activeChatId, currentUser.uid, false).catch(() => {});
+      }
+    };
+  }, [activeChatId, currentUser?.uid]);
+
   const renderStatus = () => {
+    if (otherUserTyping) return <p className="text-xs text-blue-500">يكتب الآن...</p>;
     if (!otherUserStatus) return <p className="text-xs text-gray-400">غير متصل</p>;
     if (otherUserStatus.isOnline) return <p className="text-xs text-green-500">متصل الآن</p>;
     
@@ -210,6 +414,43 @@ export default function ChatInterface() {
     const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     
     return <p className="text-xs text-gray-500">آخر ظهور: {isToday ? 'اليوم' : date.toLocaleDateString()} {timeStr}</p>;
+  };
+
+  const getMessageDeliveryState = (msg, isMe) => {
+    if (!isMe) return null;
+
+    if (msg.status === 'sending') return 'sending';
+    if (msg.status === 'failed') return 'failed';
+
+    const otherUserId = activeChatOtherUser?.uid || activeChatDetails?.participants?.find((id) => id !== currentUser.uid);
+    if (!otherUserId) return 'sent';
+
+    if (msg.seenTo?.[otherUserId]) return 'seen';
+    if (msg.deliveredTo?.[otherUserId]) return 'delivered';
+    return 'sent';
+  };
+
+  const formatReceiptTime = (ts) => {
+    if (!ts?.toDate) return '';
+    const d = ts.toDate();
+    if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString([], { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+  };
+
+  const getDeliveryTitle = (msg, state, isMe) => {
+    if (!isMe) return '';
+    const otherUserId = activeChatOtherUser?.uid || activeChatDetails?.participants?.find((id) => id !== currentUser.uid);
+    if (!otherUserId) return '';
+
+    if (state === 'seen') {
+      const seenAt = formatReceiptTime(msg.seenTo?.[otherUserId]);
+      return seenAt ? `تمت القراءة: ${seenAt}` : 'تمت القراءة';
+    }
+    if (state === 'delivered') {
+      const deliveredAt = formatReceiptTime(msg.deliveredTo?.[otherUserId]);
+      return deliveredAt ? `تم التسليم: ${deliveredAt}` : 'تم التسليم';
+    }
+    return '';
   };
 
   return (
@@ -272,13 +513,21 @@ export default function ChatInterface() {
               const otherUser = getOtherParticipant(chat);
               const isActive = chat.id === activeChatId;
               const timeString = chat.lastMessageAt?.toDate().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) || '';
+              const unreadCount = chat.unreadCount?.[currentUser.uid] || 0;
               return (
                 <div key={chat.id} onClick={() => setActiveChatId(chat.id)} className={`flex items-center p-3 rounded-lg cursor-pointer transition ${isActive ? 'bg-blue-50' : 'hover:bg-gray-100'}`}>
                   <img src={otherUser?.avatar || `https://ui-avatars.com/api/?name=${otherUser?.name || 'U'}&background=random`} alt="avatar" className="w-12 h-12 rounded-full object-cover flex-shrink-0 bg-gray-200" onError={handleImageError} />
                   <div className="mr-4 flex-1 min-w-0">
                     <div className="flex justify-between items-baseline mb-1">
                       <h3 className="font-semibold text-gray-900 truncate">{otherUser?.name || 'مستخدم'}</h3>
-                      <span className="text-xs text-gray-500 flex-shrink-0 mr-2">{timeString}</span>
+                      <div className="flex items-center gap-2">
+                        {unreadCount > 0 && (
+                          <span className="text-[10px] bg-blue-600 text-white rounded-full min-w-5 h-5 px-1 inline-flex items-center justify-center">
+                            {unreadCount > 99 ? '99+' : unreadCount}
+                          </span>
+                        )}
+                        <span className="text-xs text-gray-500 flex-shrink-0 mr-2">{timeString}</span>
+                      </div>
                     </div>
                     <p className="text-sm text-gray-600 truncate">{chat.lastMessage || 'بدأ محادثة جديدة'}</p>
                   </div>
@@ -331,14 +580,113 @@ export default function ChatInterface() {
               {messages.map((msg, idx) => {
                 const isMe = msg.senderId === currentUser.uid;
                 const timeString = msg.timestamp?.toDate().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) || '';
+                const isFailed = msg.status === 'failed';
+                const isSending = msg.status === 'sending';
+                const isSentPendingAck = msg.status === 'sent' && msg._localOnly;
+                const deliveryState = getMessageDeliveryState(msg, isMe);
+                const deliveryTitle = getDeliveryTitle(msg, deliveryState, isMe);
+                const canShowActions = !msg._localOnly && !msg.isDeleted;
+                const isSwipingThis = swipePreview.messageId === msg.id;
+                const swipeOffset = isSwipingThis ? swipePreview.offsetX : 0;
+                const swipeStrength = Math.min(1, Math.abs(swipeOffset) / 72);
                 
                 return (
-                  <div key={msg.id || idx} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`p-3 rounded-lg max-w-[75%] md:max-w-md relative ${isMe ? 'bg-blue-500 text-white rounded-tr-none' : 'bg-white text-gray-800 shadow-sm rounded-tl-none'}`}>
-                      {renderMessageContent(msg, isMe)}
-                      <div className={`text-[10px] mt-1 text-left ${isMe ? 'text-blue-200' : 'text-gray-400'}`}>
-                        {timeString}
+                  <div key={msg.id || idx} className={`flex ${isMe ? 'justify-end' : 'justify-start'} relative`}>
+                    {isSwipingThis && Math.abs(swipeOffset) > 8 && (
+                      <div
+                        className={`absolute top-1/2 -translate-y-1/2 ${isMe ? 'left-2' : 'right-2'} text-blue-500`}
+                        style={{ opacity: swipeStrength }}
+                      >
+                        <Reply size={18} />
                       </div>
+                    )}
+                    <div
+                      className={`p-3 rounded-lg max-w-[75%] md:max-w-md relative ${isMe ? 'bg-blue-500 text-white rounded-tr-none' : 'bg-white text-gray-800 shadow-sm rounded-tl-none'}`}
+                      style={{ transform: `translateX(${swipeOffset}px)`, transition: isSwipingThis ? 'none' : 'transform 180ms ease-out' }}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        if (canShowActions) setActionMenuMessage(msg);
+                      }}
+                      onTouchStart={(e) => {
+                        if (!canShowActions) return;
+                        handleSwipeStart(e, msg);
+                        handleMessageTouchStart(msg);
+                      }}
+                      onTouchMove={(e) => {
+                        if (!canShowActions) return;
+                        handleSwipeMove(e, msg);
+                      }}
+                      onTouchEnd={handleSwipeEnd}
+                      onTouchCancel={handleSwipeEnd}
+                    >
+                      {msg.replyTo && (
+                        <div className={`mb-2 p-2 rounded border-r-2 text-xs ${isMe ? 'bg-blue-400/50 border-white/60' : 'bg-gray-100 border-blue-400 text-gray-700'}`}>
+                          <p className="font-semibold mb-1">رد على رسالة</p>
+                          <p className="truncate">{msg.replyTo.textPreview || '[رسالة]'}</p>
+                        </div>
+                      )}
+
+                      {renderMessageContent(msg, isMe)}
+                      <div className={`text-[10px] mt-1 text-left flex items-center gap-2 ${isMe ? 'text-blue-200' : 'text-gray-400'}`}>
+                        <span>{timeString}</span>
+                        {!msg.isDeleted && msg.isEdited && <span>(معدلة)</span>}
+                        {isMe && isSending && <span>جاري الإرسال...</span>}
+                        {isMe && isSentPendingAck && <span>تم الإرسال</span>}
+                        {isMe && !isSending && !isFailed && !isSentPendingAck && deliveryState === 'sent' && (
+                          <span className="inline-flex items-center gap-1"><Check size={12} /> <span>مرسلة</span></span>
+                        )}
+                        {isMe && !isSending && !isFailed && !isSentPendingAck && deliveryState === 'delivered' && (
+                          <span className="inline-flex items-center gap-1" title={deliveryTitle}><CheckCheck size={12} /> <span>تم التسليم</span></span>
+                        )}
+                        {isMe && !isSending && !isFailed && !isSentPendingAck && deliveryState === 'seen' && (
+                          <span className="inline-flex items-center gap-1 text-cyan-200" title={deliveryTitle}><CheckCheck size={12} /> <span>تمت القراءة</span></span>
+                        )}
+                        {isMe && isFailed && (
+                          <>
+                            <span className="text-red-200">فشل الإرسال</span>
+                            <button
+                              type="button"
+                              onClick={() => retryMessage(msg.id)}
+                              className="underline text-red-100 hover:text-white"
+                            >
+                              إعادة المحاولة
+                            </button>
+                          </>
+                        )}
+                      </div>
+
+                      {canShowActions && (
+                        <div className={`mt-2 hidden md:flex gap-2 ${isMe ? 'justify-end' : 'justify-start'}`}>
+                          <button
+                            type="button"
+                            onClick={() => handleReplyToMessage(msg)}
+                            className={`text-[11px] inline-flex items-center gap-1 ${isMe ? 'text-blue-100 hover:text-white' : 'text-gray-500 hover:text-gray-700'}`}
+                          >
+                            <Reply size={12} />
+                            <span>رد</span>
+                          </button>
+                          {isMe && msg.type === 'text' && (
+                            <button
+                              type="button"
+                              onClick={() => handleEditMessage(msg)}
+                              className="text-[11px] inline-flex items-center gap-1 text-blue-100 hover:text-white"
+                            >
+                              <Pencil size={12} />
+                              <span>تعديل</span>
+                            </button>
+                          )}
+                          {isMe && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteMessage(msg)}
+                              className="text-[11px] inline-flex items-center gap-1 text-red-100 hover:text-white"
+                            >
+                              <Trash2 size={12} />
+                              <span>حذف</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -356,6 +704,26 @@ export default function ChatInterface() {
             </div>
 
             <footer className="p-4 bg-gray-50 flex items-center relative z-20">
+              {(replyingTo || editingMessageId) && (
+                <div className="absolute bottom-16 right-4 left-4 bg-white border border-gray-200 rounded-xl px-3 py-2 flex items-center justify-between z-30">
+                  <div className="text-sm text-gray-700 truncate ml-3">
+                    {editingMessageId ? `تعديل الرسالة: ${messageText}` : `رد على: ${replyingTo?.textPreview || ''}`}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReplyingTo(null);
+                      setEditingMessageId(null);
+                      setMessageText('');
+                    }}
+                    className="p-1 text-gray-500 hover:text-gray-700"
+                    aria-label="إلغاء"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              )}
+
               {showAttachMenu && (
                 <div className="absolute bottom-16 right-4 bg-white border border-gray-200 shadow-xl rounded-2xl p-2 flex flex-col gap-2 z-30 w-48">
                   <button onClick={() => imageInputRef.current.click()} className="flex items-center gap-3 p-2 hover:bg-gray-100 rounded-lg transition text-gray-700 w-full">
@@ -385,8 +753,8 @@ export default function ChatInterface() {
                 <input 
                   type="text" 
                   value={messageText}
-                  onChange={(e) => setMessageText(e.target.value)}
-                  placeholder="اكتب رسالة..." 
+                  onChange={(e) => handleMessageInputChange(e.target.value)}
+                  placeholder={editingMessageId ? 'عدل الرسالة...' : 'اكتب رسالة...'} 
                   className="flex-1 border border-gray-300 rounded-full py-2.5 px-4 pr-12 focus:outline-none focus:border-blue-500 bg-white"
                   disabled={isRecording || uploading}
                 />
@@ -431,6 +799,57 @@ export default function ChatInterface() {
       {/* Click outside attachment menu overlay */}
       {showAttachMenu && (
         <div className="fixed inset-0 z-10" onClick={() => setShowAttachMenu(false)}></div>
+      )}
+
+      {actionMenuMessage && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setActionMenuMessage(null)}></div>
+          <div className="fixed bottom-0 left-0 right-0 z-50 bg-white rounded-t-2xl shadow-2xl p-4 space-y-2">
+            <button
+              type="button"
+              onClick={() => handleReplyToMessage(actionMenuMessage)}
+              className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-gray-100 text-right"
+            >
+              <Reply size={18} />
+              <span>رد</span>
+            </button>
+            {actionMenuMessage.senderId === currentUser.uid && actionMenuMessage.type === 'text' && (
+              <button
+                type="button"
+                onClick={() => handleEditMessage(actionMenuMessage)}
+                className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-gray-100 text-right"
+              >
+                <Pencil size={18} />
+                <span>تعديل</span>
+              </button>
+            )}
+            {actionMenuMessage.senderId === currentUser.uid && (
+              <button
+                type="button"
+                onClick={() => handleDeleteMessage(actionMenuMessage)}
+                className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-red-50 text-red-600 text-right"
+              >
+                <Trash2 size={18} />
+                <span>حذف</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setActionMenuMessage(null)}
+              className="w-full p-3 rounded-lg bg-gray-100 text-gray-700"
+            >
+              إلغاء
+            </button>
+          </div>
+        </>
+      )}
+
+      {swipeToast && (
+        <div
+          className={`fixed bottom-24 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full bg-gray-900 text-white text-sm shadow-lg transition-all duration-250 ${swipeToastVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2 pointer-events-none'}`}
+        >
+          {swipeToast}
+        </div>
       )}
     </div>
   );

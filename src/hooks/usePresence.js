@@ -57,3 +57,21 @@ export function listenToUserPresence(userId, callback) {
   });
   return unsubscribe;
 }
+
+export async function setTypingStatus(chatId, userId, isTyping) {
+  if (!chatId || !userId) return;
+  const typingRef = ref(rtdb, `/typing/${chatId}/${userId}`);
+  await set(typingRef, {
+    isTyping: !!isTyping,
+    updatedAt: Date.now()
+  });
+}
+
+export function listenToTyping(chatId, userId, callback) {
+  if (!chatId || !userId) return () => {};
+  const typingRef = ref(rtdb, `/typing/${chatId}/${userId}`);
+  const unsubscribe = onValue(typingRef, (snapshot) => {
+    callback(Boolean(snapshot.val()?.isTyping));
+  });
+  return unsubscribe;
+}

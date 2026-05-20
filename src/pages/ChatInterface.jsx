@@ -34,13 +34,20 @@ export default function ChatInterface() {
   const [highlightedMsgId, setHighlightedMsgId] = useState(null);
 
   // Scroll to and highlight a message by id
-  const scrollToMessage = (msgId) => {
+  // Scroll to a message by id, loading more if needed
+  const scrollToMessage = async (msgId, tryCount = 0) => {
     if (!msgId) return;
     const el = document.getElementById(`msg-${msgId}`);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       setHighlightedMsgId(msgId);
       setTimeout(() => setHighlightedMsgId(null), 1400);
+      return;
+    }
+    // If not found, try loading more messages (pagination)
+    if (tryCount < 5 && hasMore && typeof loadMoreMessages === 'function') {
+      await loadMoreMessages();
+      setTimeout(() => scrollToMessage(msgId, tryCount + 1), 350);
     }
   };
 

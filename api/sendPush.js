@@ -1,4 +1,4 @@
-const webpush = require('web-push');
+import webpush from 'web-push';
 
 // Use environment variables in Vercel for these keys
 const publicVapidKey = process.env.VITE_VAPID_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY;

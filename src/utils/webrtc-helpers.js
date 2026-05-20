@@ -36,6 +36,18 @@ export const getIceServers = () => {
  * Get user media (camera and microphone)
  */
 export const getUserMediaStream = async (isVideoEnabled = true) => {
+  const host = window.location.hostname;
+  const isLocalhost = host === 'localhost' || host === '127.0.0.1';
+  const isSecure = window.isSecureContext || isLocalhost;
+
+  if (!isSecure) {
+    throw new Error('المكالمات على الهاتف تحتاج HTTPS. افتح التطبيق عبر رابط https وليس عنوان IP عادي.');
+  }
+
+  if (!navigator?.mediaDevices?.getUserMedia) {
+    throw new Error('المتصفح الحالي لا يدعم getUserMedia. استخدم Chrome أو Safari وافتح الرابط خارج المتصفح الداخلي للتطبيقات.');
+  }
+
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: isVideoEnabled ? {
@@ -48,7 +60,16 @@ export const getUserMediaStream = async (isVideoEnabled = true) => {
     return stream;
   } catch (error) {
     console.error("Error accessing media devices:", error);
-    throw new Error('Please allow camera and microphone permissions.');
+    if (error?.name === 'NotAllowedError') {
+      throw new Error('تم رفض صلاحية الكاميرا/الميكروفون. اسمح بالصلاحيات ثم أعد المحاولة.');
+    }
+    if (error?.name === 'NotFoundError') {
+      throw new Error('لا توجد كاميرا أو ميكروفون متاحان على هذا الجهاز.');
+    }
+    if (error?.name === 'NotReadableError') {
+      throw new Error('تعذر تشغيل الكاميرا/الميكروفون. قد يكون مستخدما في تطبيق آخر.');
+    }
+    throw new Error('تعذر بدء المكالمة بسبب مشكلة في الكاميرا/الميكروفون.');
   }
 };
 

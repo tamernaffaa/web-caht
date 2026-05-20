@@ -14,7 +14,13 @@ export function useCall() {
 
 export function CallProvider({ children }) {
   const { currentUser } = useAuth();
-  const { socket, isConnected } = useSocket();
+  const { socket, isConnected, connectionError } = useSocket();
+
+  const emitIfConnected = (event, payload) => {
+    if (!socket || !isConnected) return false;
+    socket.emit(event, payload);
+    return true;
+  };
 
   // Call States: idle, calling, ringing, connected, ended
   const [callState, setCallState] = useState('idle'); 
@@ -26,7 +32,7 @@ export function CallProvider({ children }) {
   const [remoteStream, setRemoteStream] = useState(null);
 
   const peerRef = useRef(null);
-  const audioRef = useRef(new Audio('/ringtone.mp3')); // Make sure to add a ringtone.mp3 in public folder
+  const audioRef = useRef(null);
 
   // --------------------------
   // Incoming Call Listeners
@@ -42,11 +48,12 @@ export function CallProvider({ children }) {
       }
       setIncomingCallData(data);
       setCallState('ringing');
-      audioRef.current.loop = true;
-      audioRef.current.play().catch(e => console.log('Audio play failed (browser autoplay policy)', e));
     });
 
     socket.on('call-answered', ({ roomId }) => {
+      if (!peerRef.current && activeCallData && localStream) {
+        createPeer(activeCallData.targetUserId, roomId, localStream, true);
+      }
       setCallState('connected');
     });
 
@@ -65,7 +72,7 @@ export function CallProvider({ children }) {
       socket.off('call-rejected');
       socket.off('call-ended');
     };
-  }, [socket, isConnected, callState]);
+  }, [socket, isConnected, callState, activeCallData, localStream]);
 
   // --------------------------
   // Core Actions
@@ -73,6 +80,12 @@ export function CallProvider({ children }) {
 
   const startCall = async (targetUserId, roomId, isVideo = true, otherUserName = 'المستخدم') => {
     try {
+      if (!socket || !isConnected) {
+        const details = connectionError ? `\nالسبب: ${connectionError}` : '';
+        alert(`جاري الاتصال بالخادم، حاول مرة أخرى خلال لحظة.${details}`);
+        return;
+      }
+
       setCallState('calling');
       setActiveCallData({ roomId, targetUserId, isVideo, otherUserName });
 
@@ -81,31 +94,35 @@ export function CallProvider({ children }) {
       setLocalStream(stream);
 
       // 2. Notify Server
-      socket.emit('call-user', { 
+      emitIfConnected('call-user', {
         targetUserId, 
         roomId, 
         isVideo, 
         caller: { uid: currentUser.uid, name: currentUser.displayName, avatar: currentUser.photoURL } 
       });
 
-      // 3. Create Peer (Initiator)
-      createPeer(targetUserId, roomId, stream, true);
-
     } catch (err) {
       console.error(err);
+      alert(err?.message || 'فشل بدء المكالمة.');
       cleanupCall();
     }
   };
 
   const answerCall = async (acceptVideo = true) => {
     if (!incomingCallData) return;
-    audioRef.current.pause();
-    audioRef.current.currentTime = 0;
+    if (!socket || !isConnected) {
+      alert('الاتصال بالخادم غير متاح حاليًا.');
+      return;
+    }
+
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
 
     try {
       const stream = await getUserMediaStream(acceptVideo);
       setLocalStream(stream);
-      setCallState('connected');
       setActiveCallData({
         roomId: incomingCallData.roomId,
         targetUserId: incomingCallData.caller.uid,
@@ -113,36 +130,40 @@ export function CallProvider({ children }) {
         otherUserName: incomingCallData.caller.name
       });
 
+      // Create Peer (Not Initiator) BEFORE notifying caller to avoid losing first offer.
+      createPeer(incomingCallData.caller.uid, incomingCallData.roomId, stream, false);
+      setCallState('connected');
+
       // Notify caller
-      socket.emit('answer-call', { 
+      emitIfConnected('answer-call', {
         targetUserId: incomingCallData.caller.uid, 
         roomId: incomingCallData.roomId 
       });
-
-      // Create Peer (Not Initiator)
-      createPeer(incomingCallData.caller.uid, incomingCallData.roomId, stream, false);
       setIncomingCallData(null);
     } catch (err) {
       console.error(err);
+      alert(err?.message || 'فشل الرد على المكالمة.');
       rejectCall();
     }
   };
 
   const rejectCall = () => {
     if (incomingCallData) {
-      socket.emit('reject-call', { 
+      emitIfConnected('reject-call', {
         targetUserId: incomingCallData.caller.uid, 
         roomId: incomingCallData.roomId 
       });
     }
-    audioRef.current.pause();
-    audioRef.current.currentTime = 0;
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+    }
     cleanupCall();
   };
 
   const endCall = async () => {
     if (activeCallData) {
-      socket.emit('end-call', { roomId: activeCallData.roomId });
+      emitIfConnected('end-call', { roomId: activeCallData.roomId });
       
       // Save call log to Firestore
       try {
@@ -163,6 +184,11 @@ export function CallProvider({ children }) {
   // WebRTC Peer Management
   // --------------------------
   const createPeer = (targetUserId, roomId, stream, initiator) => {
+    if (!socket || !isConnected) {
+      cleanupCall();
+      return;
+    }
+
     const peer = new Peer({
       initiator,
       trickle: true,
@@ -173,7 +199,7 @@ export function CallProvider({ children }) {
     });
 
     peer.on('signal', (signal) => {
-      socket.emit('signal', { roomId, targetUserId, signal });
+      emitIfConnected('signal', { roomId, targetUserId, signal });
     });
 
     peer.on('stream', (remoteStream) => {

@@ -5,7 +5,7 @@ import { useMessages } from '../hooks/useMessages';
 import { useUsers } from '../hooks/useUsers';
 import { useMediaStorage } from '../hooks/useMediaStorage';
 import { listenToUserPresence } from '../hooks/usePresence';
-import { LogOut, Plus, Search, Send, User, Paperclip, Image as ImageIcon, FileText, MapPin, Mic, Square, Loader } from 'lucide-react';
+import { LogOut, Plus, Search, Send, User, Paperclip, Image as ImageIcon, FileText, MapPin, Mic, Square, Loader, ArrowRight } from 'lucide-react';
 
 // Call Components
 import CallButton from '../components/CallButton';
@@ -24,6 +24,12 @@ export default function ChatInterface() {
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [otherUserStatus, setOtherUserStatus] = useState(null);
+
+  const fallbackAvatar = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%239ca3af'%3E%3Cpath d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3E%3C/svg%3E";
+  const handleImageError = (e) => {
+    e.target.onerror = null;
+    e.target.src = fallbackAvatar;
+  };
 
   const { messages, loading: msgsLoading, hasMore, loadMoreMessages, sendMessage } = useMessages(activeChatId);
   
@@ -218,13 +224,14 @@ export default function ChatInterface() {
       <VideoCall />
 
       {/* Sidebar */}
-      <aside className="w-1/3 max-w-sm bg-white border-l border-gray-200 flex flex-col relative z-20">
+      <aside className={`w-full md:w-1/3 md:max-w-sm bg-white border-l border-gray-200 flex-col relative z-20 ${activeChatId ? 'hidden md:flex' : 'flex'}`}>
         <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
           <div className="flex items-center gap-3">
             <img 
-              src={currentUser?.photoURL || currentUser?.avatar || `https://ui-avatars.com/api/?name=${currentUser?.email?.charAt(0)}`} 
+              src={currentUser?.avatar || currentUser?.photoURL || `https://ui-avatars.com/api/?name=${currentUser?.name || currentUser?.displayName || currentUser?.email?.charAt(0) || 'U'}&background=random`} 
               alt="avatar" 
-              className="w-10 h-10 rounded-full object-cover"
+              className="w-10 h-10 rounded-full object-cover bg-gray-200"
+              onError={handleImageError}
             />
             <h2 className="text-xl font-semibold text-gray-800">المحادثات</h2>
           </div>
@@ -250,7 +257,7 @@ export default function ChatInterface() {
               <h3 className="text-sm font-semibold text-gray-500 px-2 py-2">المستخدمون المتاحون</h3>
               {users.map(u => (
                 <div key={u.uid} onClick={() => handleStartChat(u)} className="flex items-center p-3 hover:bg-gray-100 rounded-lg cursor-pointer transition">
-                  <img src={u.avatar} alt={u.name} className="w-12 h-12 rounded-full object-cover" />
+                  <img src={u.avatar} alt={u.name} className="w-12 h-12 rounded-full object-cover bg-gray-200" onError={handleImageError} />
                   <div className="mr-4 flex-1">
                     <h3 className="font-semibold text-gray-900">{u.name}</h3>
                     <p className="text-xs text-gray-500">{u.email}</p>
@@ -267,7 +274,7 @@ export default function ChatInterface() {
               const timeString = chat.lastMessageAt?.toDate().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) || '';
               return (
                 <div key={chat.id} onClick={() => setActiveChatId(chat.id)} className={`flex items-center p-3 rounded-lg cursor-pointer transition ${isActive ? 'bg-blue-50' : 'hover:bg-gray-100'}`}>
-                  <img src={otherUser?.avatar || 'https://via.placeholder.com/150'} alt="avatar" className="w-12 h-12 rounded-full object-cover flex-shrink-0" />
+                  <img src={otherUser?.avatar || `https://ui-avatars.com/api/?name=${otherUser?.name || 'U'}&background=random`} alt="avatar" className="w-12 h-12 rounded-full object-cover flex-shrink-0 bg-gray-200" onError={handleImageError} />
                   <div className="mr-4 flex-1 min-w-0">
                     <div className="flex justify-between items-baseline mb-1">
                       <h3 className="font-semibold text-gray-900 truncate">{otherUser?.name || 'مستخدم'}</h3>
@@ -289,12 +296,15 @@ export default function ChatInterface() {
       </aside>
 
       {/* Main Chat Area */}
-      <main className="flex-1 flex flex-col bg-[#efeae2] relative overflow-hidden">
+      <main className={`flex-1 flex-col bg-[#efeae2] relative overflow-hidden ${!activeChatId ? 'hidden md:flex' : 'flex'}`}>
         {activeChatId ? (
           <>
             <header className="p-4 bg-gray-50 border-b border-gray-200 flex items-center justify-between z-10">
               <div className="flex items-center">
-                <img src={activeChatOtherUser?.avatar || 'https://via.placeholder.com/150'} alt="avatar" className="w-10 h-10 rounded-full object-cover" />
+                <button onClick={() => setActiveChatId(null)} className="md:hidden ml-2 p-2 -mr-2 text-gray-600 hover:bg-gray-200 rounded-full transition" aria-label="العودة">
+                  <ArrowRight size={24} />
+                </button>
+                <img src={activeChatOtherUser?.avatar || `https://ui-avatars.com/api/?name=${activeChatOtherUser?.name || 'U'}&background=random`} alt="avatar" className="w-10 h-10 rounded-full object-cover bg-gray-200" onError={handleImageError} />
                 <div className="mr-4">
                   <h2 className="font-semibold text-gray-800">{activeChatOtherUser?.name}</h2>
                   {renderStatus()}

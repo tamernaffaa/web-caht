@@ -1,50 +1,83 @@
 import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
+import { auth } from '../firebase/config';
 
-// Use environment variable or default to localhost for development
-const SIGNALING_SERVER_URL = import.meta.env.VITE_SIGNALING_SERVER || 'http://localhost:5000';
+// Prefer explicit env URL. Fallback to current host (useful for mobile on same Wi-Fi).
+const SIGNALING_SERVER_URL =
+  import.meta.env.VITE_SIGNALING_SERVER ||
+  `http://${window.location.hostname}:5000`;
 
 export function useSocket() {
   const { currentUser } = useAuth();
+  const userId = currentUser?.uid;
   const socketRef = useRef(null);
+  const [socket, setSocket] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [connectionError, setConnectionError] = useState(null);
 
   useEffect(() => {
-    if (!currentUser) {
+    if (!userId) {
       if (socketRef.current) {
         socketRef.current.disconnect();
+        socketRef.current = null;
       }
+      setSocket(null);
+      setIsConnected(false);
+      setConnectionError(null);
       return;
     }
 
     const connectSocket = async () => {
-      // Get Firebase Auth token for security
-      const token = await currentUser.getIdToken();
+      try {
+        // Get Firebase Auth token for security
+        const firebaseUser = auth.currentUser;
+        const tokenSource =
+          firebaseUser && typeof firebaseUser.getIdToken === 'function'
+            ? firebaseUser
+            : (currentUser && typeof currentUser.getIdToken === 'function' ? currentUser : null);
 
-      socketRef.current = io(SIGNALING_SERVER_URL, {
-        auth: {
-          token,
-          userId: currentUser.uid
-        },
-        reconnection: true,
-        reconnectionAttempts: 10,
-        reconnectionDelay: 1000
-      });
+        if (!tokenSource) {
+          throw new Error('Firebase auth user is not ready');
+        }
 
-      socketRef.current.on('connect', () => {
-        console.log('Connected to signaling server:', socketRef.current.id);
-        setIsConnected(true);
-      });
+        const token = await tokenSource.getIdToken();
 
-      socketRef.current.on('disconnect', () => {
-        console.log('Disconnected from signaling server');
+        const nextSocket = io(SIGNALING_SERVER_URL, {
+          auth: {
+            token,
+            userId
+          },
+          reconnection: true,
+          reconnectionAttempts: 10,
+          reconnectionDelay: 1000,
+          transports: ['websocket', 'polling']
+        });
+
+        socketRef.current = nextSocket;
+        setSocket(nextSocket);
+
+        nextSocket.on('connect', () => {
+          console.log('Connected to signaling server:', nextSocket.id);
+          setIsConnected(true);
+          setConnectionError(null);
+        });
+
+        nextSocket.on('disconnect', () => {
+          console.log('Disconnected from signaling server');
+          setIsConnected(false);
+        });
+
+        nextSocket.on('connect_error', (err) => {
+          console.error('Socket connection error:', err.message);
+          setConnectionError(err.message || 'Socket connection failed');
+          setIsConnected(false);
+        });
+      } catch (err) {
+        console.error('Failed to initialize socket:', err);
+        setConnectionError(err?.message || 'Failed to initialize socket');
         setIsConnected(false);
-      });
-
-      socketRef.current.on('connect_error', (err) => {
-        console.error('Socket connection error:', err.message);
-      });
+      }
     };
 
     connectSocket();
@@ -52,9 +85,12 @@ export function useSocket() {
     return () => {
       if (socketRef.current) {
         socketRef.current.disconnect();
+        socketRef.current = null;
       }
+      setSocket(null);
+      setIsConnected(false);
     };
-  }, [currentUser]);
+  }, [userId]);
 
-  return { socket: socketRef.current, isConnected };
+  return { socket, isConnected, connectionError };
 }

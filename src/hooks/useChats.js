@@ -78,8 +78,8 @@ export function useChats() {
       type: 'individual',
       participants: [currentUser.uid, otherUser.uid],
       participantDetails: {
-        [currentUser.uid]: { name: currentUser.displayName || 'You', avatar: currentUser.photoURL || '' },
-        [otherUser.uid]: { name: otherUser.name, avatar: otherUser.avatar || '' }
+        [currentUser.uid]: { name: currentUser.displayName || currentUser.name || 'You', avatar: currentUser.avatar || currentUser.photoURL || `https://ui-avatars.com/api/?name=${currentUser.displayName || currentUser.name || 'U'}&background=random` },
+        [otherUser.uid]: { name: otherUser.name, avatar: otherUser.avatar || `https://ui-avatars.com/api/?name=${otherUser.name || 'U'}&background=random` }
       },
       lastMessage: '',
       lastMessageAt: serverTimestamp(),

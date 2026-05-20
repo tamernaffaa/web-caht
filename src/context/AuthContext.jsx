@@ -8,7 +8,7 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, getDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 
 const AuthContext = createContext();
 
@@ -70,12 +70,33 @@ export function AuthProvider({ children }) {
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setCurrentUser(user);
-      setLoading(false);
+    let unsubscribeSnapshot = null;
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        const userRef = doc(db, 'users', user.uid);
+        unsubscribeSnapshot = onSnapshot(userRef, (docSnap) => {
+          if (docSnap.exists()) {
+            setCurrentUser({ ...user, ...docSnap.data() });
+          } else {
+            setCurrentUser(user);
+          }
+          setLoading(false);
+        });
+      } else {
+        setCurrentUser(null);
+        setLoading(false);
+        if (unsubscribeSnapshot) {
+          unsubscribeSnapshot();
+        }
+      }
     });
 
-    return unsubscribe;
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeSnapshot) {
+        unsubscribeSnapshot();
+      }
+    };
   }, []);
 
   const value = {

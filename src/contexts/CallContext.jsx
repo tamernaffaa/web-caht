@@ -33,6 +33,8 @@ export function CallProvider({ children }) {
 
   const peerRef = useRef(null);
   const audioRef = useRef(null);
+  const localStreamRef = useRef(null);
+  const activeCallRef = useRef(null);
 
   // --------------------------
   // Incoming Call Listeners
@@ -51,8 +53,10 @@ export function CallProvider({ children }) {
     });
 
     socket.on('call-answered', ({ roomId }) => {
-      if (!peerRef.current && activeCallData && localStream) {
-        createPeer(activeCallData.targetUserId, roomId, localStream, true);
+      const currentCall = activeCallRef.current;
+      const currentStream = localStreamRef.current;
+      if (!peerRef.current && currentCall && currentStream) {
+        createPeer(currentCall.targetUserId, roomId, currentStream, true);
       }
       setCallState('connected');
     });
@@ -72,7 +76,7 @@ export function CallProvider({ children }) {
       socket.off('call-rejected');
       socket.off('call-ended');
     };
-  }, [socket, isConnected, callState, activeCallData, localStream]);
+  }, [socket, isConnected, callState]);
 
   // --------------------------
   // Core Actions
@@ -87,11 +91,14 @@ export function CallProvider({ children }) {
       }
 
       setCallState('calling');
-      setActiveCallData({ roomId, targetUserId, isVideo, otherUserName });
+      const callData = { roomId, targetUserId, isVideo, otherUserName };
+      setActiveCallData(callData);
+      activeCallRef.current = callData;
 
       // 1. Get Local Media
       const stream = await getUserMediaStream(isVideo);
       setLocalStream(stream);
+      localStreamRef.current = stream;
 
       // 2. Notify Server
       emitIfConnected('call-user', {
@@ -123,12 +130,19 @@ export function CallProvider({ children }) {
     try {
       const stream = await getUserMediaStream(acceptVideo);
       setLocalStream(stream);
+      localStreamRef.current = stream;
       setActiveCallData({
         roomId: incomingCallData.roomId,
         targetUserId: incomingCallData.caller.uid,
         isVideo: acceptVideo,
         otherUserName: incomingCallData.caller.name
       });
+      activeCallRef.current = {
+        roomId: incomingCallData.roomId,
+        targetUserId: incomingCallData.caller.uid,
+        isVideo: acceptVideo,
+        otherUserName: incomingCallData.caller.name
+      };
 
       // Create Peer (Not Initiator) BEFORE notifying caller to avoid losing first offer.
       createPeer(incomingCallData.caller.uid, incomingCallData.roomId, stream, false);
@@ -211,6 +225,10 @@ export function CallProvider({ children }) {
     });
 
     peer.on('error', (err) => {
+      const msg = String(err?.message || '').toLowerCase();
+      if (msg.includes('close called') || msg.includes('user-initiated abort')) {
+        return;
+      }
       console.error("Peer error:", err);
       cleanupCall();
     });
@@ -232,10 +250,12 @@ export function CallProvider({ children }) {
   const cleanupCall = () => {
     setCallState('idle');
     setActiveCallData(null);
+    activeCallRef.current = null;
     setIncomingCallData(null);
     
-    if (localStream) {
-      stopMediaStream(localStream);
+    if (localStreamRef.current) {
+      stopMediaStream(localStreamRef.current);
+      localStreamRef.current = null;
       setLocalStream(null);
     }
     setRemoteStream(null);

@@ -16,8 +16,15 @@ const io = new Server(server, {
   }
 });
 
-// Store userId -> socketId mapping
+// Store userId -> Set<socketId> mapping to handle reconnects/multiple tabs safely.
 const users = new Map();
+
+const getTargetSocketId = (userId) => {
+  const socketIds = users.get(userId);
+  if (!socketIds || socketIds.size === 0) return null;
+  // Pick the most recently inserted socket id.
+  return Array.from(socketIds).at(-1);
+};
 
 io.use((socket, next) => {
   const userId = socket.handshake.auth.userId;
@@ -30,30 +37,34 @@ io.use((socket, next) => {
 
 io.on('connection', (socket) => {
   console.log('User connected:', socket.userId, 'Socket ID:', socket.id);
-  users.set(socket.userId, socket.id);
+  const existingSocketIds = users.get(socket.userId) || new Set();
+  existingSocketIds.add(socket.id);
+  users.set(socket.userId, existingSocketIds);
 
   socket.on('call-user', (data) => {
     socket.join(data.roomId); // Join room for the call
-    const targetSocketId = users.get(data.targetUserId);
+    const targetSocketId = getTargetSocketId(data.targetUserId);
     if (targetSocketId) {
       io.to(targetSocketId).emit('incoming-call', {
         roomId: data.roomId,
         isVideo: data.isVideo,
         caller: data.caller
       });
+    } else {
+      console.log('Target user is offline for incoming-call:', data.targetUserId);
     }
   });
 
   socket.on('answer-call', (data) => {
     socket.join(data.roomId); // Target user also joins the room
-    const targetSocketId = users.get(data.targetUserId);
+    const targetSocketId = getTargetSocketId(data.targetUserId);
     if (targetSocketId) {
       io.to(targetSocketId).emit('call-answered', { roomId: data.roomId });
     }
   });
 
   socket.on('reject-call', (data) => {
-    const targetSocketId = users.get(data.targetUserId);
+    const targetSocketId = getTargetSocketId(data.targetUserId);
     if (targetSocketId) {
       io.to(targetSocketId).emit('call-rejected', { roomId: data.roomId });
     }
@@ -67,19 +78,29 @@ io.on('connection', (socket) => {
   });
 
   socket.on('signal', (data) => {
-    const targetSocketId = users.get(data.targetUserId);
+    const targetSocketId = getTargetSocketId(data.targetUserId);
     if (targetSocketId) {
       io.to(targetSocketId).emit('signal', {
         roomId: data.roomId,
         senderId: socket.userId,
         signal: data.signal
       });
+    } else {
+      console.log('Signal target unavailable:', data.targetUserId, 'room:', data.roomId);
     }
   });
 
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.userId);
-    users.delete(socket.userId);
+    const socketIds = users.get(socket.userId);
+    if (!socketIds) return;
+
+    socketIds.delete(socket.id);
+    if (socketIds.size === 0) {
+      users.delete(socket.userId);
+    } else {
+      users.set(socket.userId, socketIds);
+    }
   });
 });
 

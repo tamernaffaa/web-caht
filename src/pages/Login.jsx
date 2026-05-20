@@ -13,20 +13,41 @@ export default function Login() {
   const { loginWithGoogle, loginWithEmail, registerWithEmail } = useAuth();
   const navigate = useNavigate();
 
+  const mapAuthError = (err) => {
+    const code = err?.code || '';
+    if (code === 'auth/invalid-credential' || code === 'auth/invalid-login-credentials') {
+      return 'البريد الإلكتروني أو كلمة المرور غير صحيحة.';
+    }
+    if (code === 'auth/user-not-found') {
+      return 'هذا البريد غير مسجل. قم بإنشاء حساب جديد.';
+    }
+    if (code === 'auth/wrong-password') {
+      return 'كلمة المرور غير صحيحة.';
+    }
+    if (code === 'auth/too-many-requests') {
+      return 'تمت محاولات كثيرة. حاول مرة أخرى بعد قليل.';
+    }
+    if (code === 'auth/network-request-failed') {
+      return 'مشكلة في الشبكة. تحقق من الاتصال ثم أعد المحاولة.';
+    }
+    return err?.message || 'حدث خطأ غير متوقع أثناء تسجيل الدخول.';
+  };
+
   const handleEmailAuth = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
 
     try {
+      const normalizedEmail = email.trim().toLowerCase();
       if (isRegistering) {
-        await registerWithEmail(email, password, name);
+        await registerWithEmail(normalizedEmail, password, name.trim());
       } else {
-        await loginWithEmail(email, password);
+        await loginWithEmail(normalizedEmail, password);
       }
       navigate('/'); // Redirect to chats
     } catch (err) {
-      setError(err.message);
+      setError(mapAuthError(err));
     } finally {
       setLoading(false);
     }
@@ -39,7 +60,7 @@ export default function Login() {
       await loginWithGoogle();
       navigate('/');
     } catch (err) {
-      setError(err.message);
+      setError(mapAuthError(err));
     } finally {
       setLoading(false);
     }

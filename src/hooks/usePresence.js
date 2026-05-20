@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { rtdb } from '../firebase/config';
 import { ref, onValue, onDisconnect, set, serverTimestamp } from 'firebase/database';
 import { useAuth } from '../context/AuthContext';
@@ -9,35 +9,51 @@ export function usePresence() {
   useEffect(() => {
     if (!currentUser) return;
 
-    // Realtime Database references
     const userStatusRef = ref(rtdb, `/status/${currentUser.uid}`);
     const connectedRef = ref(rtdb, '.info/connected');
+    let heartbeatTimer = null;
+
+    // Always set online immediately on mount
+    set(userStatusRef, {
+      isOnline: true,
+      lastSeen: serverTimestamp()
+    });
+
+    // Heartbeat every 20 seconds to keep online status fresh
+    const startHeartbeat = () => {
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      heartbeatTimer = setInterval(() => {
+        set(userStatusRef, {
+          isOnline: true,
+          lastSeen: serverTimestamp()
+        });
+      }, 20000);
+    };
 
     const unsubscribe = onValue(connectedRef, (snapshot) => {
-      // If we are not connected, don't do anything
       if (snapshot.val() === false) {
         return;
       }
-
-      // If we are connected, set up the onDisconnect mechanism
       onDisconnect(userStatusRef)
         .set({
           isOnline: false,
           lastSeen: serverTimestamp()
         })
         .then(() => {
-          // Then immediately set our status to online
           set(userStatusRef, {
             isOnline: true,
             lastSeen: serverTimestamp()
           });
+          startHeartbeat();
         });
     });
 
+    // Fallback: start heartbeat even if .info/connected is slow
+    startHeartbeat();
+
     return () => {
-      // Clean up when unmounting
       unsubscribe();
-      // Set to offline manually when the component unmounts (e.g. logging out)
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
       set(userStatusRef, {
         isOnline: false,
         lastSeen: serverTimestamp()

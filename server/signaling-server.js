@@ -19,11 +19,14 @@ const io = new Server(server, {
 // Store userId -> Set<socketId> mapping to handle reconnects/multiple tabs safely.
 const users = new Map();
 
-const getTargetSocketId = (userId) => {
+const emitToUserSockets = (userId, event, payload) => {
   const socketIds = users.get(userId);
-  if (!socketIds || socketIds.size === 0) return null;
-  // Pick the most recently inserted socket id.
-  return Array.from(socketIds).at(-1);
+  if (!socketIds || socketIds.size === 0) return false;
+
+  for (const socketId of socketIds) {
+    io.to(socketId).emit(event, payload);
+  }
+  return true;
 };
 
 io.use((socket, next) => {
@@ -43,31 +46,23 @@ io.on('connection', (socket) => {
 
   socket.on('call-user', (data) => {
     socket.join(data.roomId); // Join room for the call
-    const targetSocketId = getTargetSocketId(data.targetUserId);
-    if (targetSocketId) {
-      io.to(targetSocketId).emit('incoming-call', {
+    const delivered = emitToUserSockets(data.targetUserId, 'incoming-call', {
         roomId: data.roomId,
         isVideo: data.isVideo,
         caller: data.caller
       });
-    } else {
+    if (!delivered) {
       console.log('Target user is offline for incoming-call:', data.targetUserId);
     }
   });
 
   socket.on('answer-call', (data) => {
     socket.join(data.roomId); // Target user also joins the room
-    const targetSocketId = getTargetSocketId(data.targetUserId);
-    if (targetSocketId) {
-      io.to(targetSocketId).emit('call-answered', { roomId: data.roomId });
-    }
+    emitToUserSockets(data.targetUserId, 'call-answered', { roomId: data.roomId });
   });
 
   socket.on('reject-call', (data) => {
-    const targetSocketId = getTargetSocketId(data.targetUserId);
-    if (targetSocketId) {
-      io.to(targetSocketId).emit('call-rejected', { roomId: data.roomId });
-    }
+    emitToUserSockets(data.targetUserId, 'call-rejected', { roomId: data.roomId });
   });
 
   socket.on('end-call', (data) => {
@@ -78,14 +73,22 @@ io.on('connection', (socket) => {
   });
 
   socket.on('signal', (data) => {
-    const targetSocketId = getTargetSocketId(data.targetUserId);
-    if (targetSocketId) {
-      io.to(targetSocketId).emit('signal', {
+    const delivered = emitToUserSockets(data.targetUserId, 'signal', {
         roomId: data.roomId,
         senderId: socket.userId,
         signal: data.signal
       });
-    } else {
+
+    // Fallback: route by room in case target socket mapping is stale.
+    if (!delivered && data.roomId) {
+      socket.to(data.roomId).emit('signal', {
+        roomId: data.roomId,
+        senderId: socket.userId,
+        signal: data.signal
+      });
+    }
+
+    if (!delivered) {
       console.log('Signal target unavailable:', data.targetUserId, 'room:', data.roomId);
     }
   });

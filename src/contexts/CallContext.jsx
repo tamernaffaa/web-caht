@@ -208,7 +208,8 @@ export function CallProvider({ children }) {
       trickle: true,
       stream,
       config: {
-        iceServers: getIceServers()
+        iceServers: getIceServers(),
+        iceTransportPolicy: import.meta.env.VITE_FORCE_TURN === 'true' ? 'relay' : 'all'
       }
     });
 

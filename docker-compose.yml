@@ -1,0 +1,60 @@
+services:
+  signaling:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    env_file:
+      - .env.docker
+    environment:
+      PORT: ${PORT:-3000}
+      HOST: ${HOST:-0.0.0.0}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN}
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+  coturn:
+    build:
+      context: ./docker/coturn
+      dockerfile: Dockerfile
+    env_file:
+      - .env.docker
+    environment:
+      TURN_PUBLIC_IP: ${TURN_PUBLIC_IP}
+      TURN_REALM: ${TURN_REALM:-chat.local}
+      TURN_USERNAME: ${TURN_USERNAME}
+      TURN_PASSWORD: ${TURN_PASSWORD}
+    ports:
+      - "3478:3478/tcp"
+      - "3478:3478/udp"
+      - "5349:5349/tcp"
+      - "49160-49200:49160-49200/udp"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY}
+        VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN}
+        VITE_FIREBASE_PROJECT_ID: ${VITE_FIREBASE_PROJECT_ID}
+        VITE_FIREBASE_STORAGE_BUCKET: ${VITE_FIREBASE_STORAGE_BUCKET}
+        VITE_FIREBASE_MESSAGING_SENDER_ID: ${VITE_FIREBASE_MESSAGING_SENDER_ID}
+        VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID}
+        VITE_FIREBASE_MEASUREMENT_ID: ${VITE_FIREBASE_MEASUREMENT_ID}
+        VITE_FIREBASE_DATABASE_URL: ${VITE_FIREBASE_DATABASE_URL}
+        VITE_VAPID_PUBLIC_KEY: ${VITE_VAPID_PUBLIC_KEY}
+        VITE_SIGNALING_SERVER: ${VITE_SIGNALING_SERVER}
+        VITE_TURN_HOST: ${VITE_TURN_HOST}
+        VITE_TURN_PORT: ${VITE_TURN_PORT}
+        VITE_TURNS_PORT: ${VITE_TURNS_PORT}
+        VITE_TURN_USERNAME: ${VITE_TURN_USERNAME}
+        VITE_TURN_CREDENTIAL: ${VITE_TURN_CREDENTIAL}
+        VITE_FORCE_TURN: ${VITE_FORCE_TURN:-true}
+    ports:
+      - "80:80"
+    depends_on:
+      - signaling
+      - coturn
+    restart: unless-stopped

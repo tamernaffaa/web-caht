@@ -2,17 +2,39 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-require('dotenv').config({ path: '../.env' }); // Try to load .env from parent if exists
+require('dotenv').config();
+require('dotenv').config({ path: '../.env' });
+
+const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || '0.0.0.0';
+const allowedOrigins = (process.env.FRONTEND_ORIGIN || '*')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const corsOriginHandler = (origin, callback) => {
+  // Allow server-to-server checks (no Origin header) and permissive mode.
+  if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+    callback(null, true);
+    return;
+  }
+  callback(new Error('Not allowed by CORS'));
+};
 
 const app = express();
-app.use(cors());
+app.set('trust proxy', 1);
+app.use(cors({ origin: corsOriginHandler, credentials: true }));
+app.get('/health', (_req, res) => {
+  res.status(200).json({ ok: true });
+});
 
 const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
+    origin: corsOriginHandler,
+    methods: ['GET', 'POST'],
+    credentials: true
   }
 });
 
@@ -107,7 +129,7 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`Signaling server running on port ${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`Signaling server running on ${HOST}:${PORT}`);
+  console.log(`Allowed origins: ${allowedOrigins.join(', ')}`);
 });

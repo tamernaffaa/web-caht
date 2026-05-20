@@ -4,9 +4,10 @@ import { useAuth } from '../context/AuthContext';
 import { auth } from '../firebase/config';
 
 // Prefer explicit env URL. Fallback to current host (useful for mobile on same Wi-Fi).
+const defaultProtocol = window.location.protocol === 'https:' ? 'https' : 'http';
 const SIGNALING_SERVER_URL =
   import.meta.env.VITE_SIGNALING_SERVER ||
-  `http://${window.location.hostname}:5000`;
+  `${defaultProtocol}://${window.location.hostname}:3000`;
 
 export function useSocket() {
   const { currentUser } = useAuth();

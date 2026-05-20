@@ -1,33 +1,35 @@
 // src/utils/webrtc-helpers.js
 
 /**
- * Get ICE Servers configuration including STUN and fallback TURN servers.
+ * Get ICE Servers configuration from self-hosted coturn on EC2.
  */
 export const getIceServers = () => {
+  const turnHost = import.meta.env.VITE_TURN_HOST || window.location.hostname;
+  const turnPort = import.meta.env.VITE_TURN_PORT || '3478';
+  const turnsPort = import.meta.env.VITE_TURNS_PORT || '5349';
+  const turnUsername = import.meta.env.VITE_TURN_USERNAME || 'turnuser';
+  const turnCredential = import.meta.env.VITE_TURN_CREDENTIAL || 'turnpassword';
+
   return [
     {
-      urls: [
-        'stun:stun.l.google.com:19302',
-        'stun:stun1.l.google.com:19302',
-        'stun:stun2.l.google.com:19302',
-        'stun:stun.services.mozilla.com'
-      ]
-    },
-    // Optional Free TURN Server (e.g. metered.ca open relay)
-    {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
+      urls: [`stun:${turnHost}:${turnPort}`]
     },
     {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
+      urls: [`turn:${turnHost}:${turnPort}`],
+      username: turnUsername,
+      credential: turnCredential
     },
+    // TCP relay fallback helps in restrictive networks.
     {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
+      urls: [`turn:${turnHost}:${turnPort}?transport=tcp`],
+      username: turnUsername,
+      credential: turnCredential
+    },
+    // TLS TURN endpoint if enabled in coturn.
+    {
+      urls: [`turns:${turnHost}:${turnsPort}?transport=tcp`],
+      username: turnUsername,
+      credential: turnCredential
     }
   ];
 };

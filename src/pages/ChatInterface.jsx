@@ -5,7 +5,7 @@ import { useMessages } from '../hooks/useMessages';
 import { useUsers } from '../hooks/useUsers';
 import { useMediaStorage } from '../hooks/useMediaStorage';
 import { listenToUserPresence, listenToTyping, setTypingStatus } from '../hooks/usePresence';
-import { LogOut, Plus, Search, Send, User, Paperclip, Image as ImageIcon, FileText, MapPin, Mic, Square, Loader, ArrowRight, Reply, Pencil, Trash2, X, Check, CheckCheck } from 'lucide-react';
+import { LogOut, Plus, Search, Send, User, Paperclip, Image as ImageIcon, FileText, MapPin, Mic, Square, Loader, ArrowRight, Reply, Pencil, Trash2, X, Check, CheckCheck, ArrowDown } from 'lucide-react';
 
 // Call Components
 import CallButton from '../components/CallButton';
@@ -71,6 +71,8 @@ export default function ChatInterface() {
   
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [newMsgWhileAway, setNewMsgWhileAway] = useState(false);
   const imageInputRef = useRef(null);
   const docInputRef = useRef(null);
   
@@ -81,9 +83,39 @@ export default function ChatInterface() {
   const longPressTimerRef = useRef(null);
   const swipeGestureRef = useRef({ messageId: null, startX: 0, startY: 0, triggered: false });
 
+  // Scroll to bottom helper
+  const scrollToBottom = (smooth = true) => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
+    }
+  };
+
+  // Auto scroll to bottom on new messages if user is at bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!messagesContainerRef.current) return;
+    const el = messagesContainerRef.current;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    if (atBottom) {
+      scrollToBottom(false);
+      setNewMsgWhileAway(false);
+    } else {
+      setNewMsgWhileAway(true);
+    }
   }, [messages, uploading]);
+
+  // Show/hide scroll-to-bottom button on scroll
+  useEffect(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const handle = () => {
+      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+      setShowScrollToBottom(!atBottom);
+      if (atBottom) setNewMsgWhileAway(false);
+    };
+    el.addEventListener('scroll', handle);
+    handle();
+    return () => el.removeEventListener('scroll', handle);
+  }, [activeChatId]);
 
   const handleScroll = (e) => {
     if (e.target.scrollTop === 0 && hasMore && !msgsLoading) {
@@ -587,7 +619,7 @@ export default function ChatInterface() {
               />
             </header>
 
-            <div ref={messagesContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div ref={messagesContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 space-y-4 relative">
               {hasMore && (
                 <div className="text-center py-2">
                   <span className="text-xs bg-white text-gray-500 px-3 py-1 rounded-full shadow-sm cursor-pointer hover:bg-gray-50" onClick={loadMoreMessages}>
@@ -811,6 +843,20 @@ export default function ChatInterface() {
                 )}
               </form>
             </footer>
+
+            {/* Floating scroll-to-bottom button (anchored to main, above footer) */}
+            {showScrollToBottom && (
+              <button
+                type="button"
+                onClick={() => scrollToBottom()}
+                className="absolute bottom-[88px] left-4 md:left-auto md:right-6 z-40 bg-blue-600 text-white rounded-full shadow-lg p-3 hover:bg-blue-700 transition flex items-center gap-1 animate-fade-in"
+                style={{ minWidth: 48, minHeight: 48 }}
+                aria-label="الانتقال لآخر المحادثة"
+              >
+                <ArrowDown size={26} />
+                {newMsgWhileAway && <span className="w-2 h-2 bg-red-500 rounded-full ml-1 animate-pulse"></span>}
+              </button>
+            )}
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-500">

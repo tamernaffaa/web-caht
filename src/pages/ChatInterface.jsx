@@ -31,6 +31,18 @@ export default function ChatInterface() {
   const [swipePreview, setSwipePreview] = useState({ messageId: null, offsetX: 0 });
   const [swipeToast, setSwipeToast] = useState('');
   const [swipeToastVisible, setSwipeToastVisible] = useState(false);
+  const [highlightedMsgId, setHighlightedMsgId] = useState(null);
+
+  // Scroll to and highlight a message by id
+  const scrollToMessage = (msgId) => {
+    if (!msgId) return;
+    const el = document.getElementById(`msg-${msgId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setHighlightedMsgId(msgId);
+      setTimeout(() => setHighlightedMsgId(null), 1400);
+    }
+  };
 
   const fallbackAvatar = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%239ca3af'%3E%3Cpath d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3E%3C/svg%3E";
   const handleImageError = (e) => {
@@ -591,7 +603,11 @@ export default function ChatInterface() {
                 const swipeStrength = Math.min(1, Math.abs(swipeOffset) / 72);
                 
                 return (
-                  <div key={msg.id || idx} className={`flex ${isMe ? 'justify-end' : 'justify-start'} relative`}>
+                  <div
+                    key={msg.id || idx}
+                    id={`msg-${msg.id}`}
+                    className={`flex ${isMe ? 'justify-end' : 'justify-start'} relative`}
+                  >
                     {isSwipingThis && Math.abs(swipeOffset) > 8 && (
                       <div
                         className={`absolute top-1/2 -translate-y-1/2 ${isMe ? 'left-2' : 'right-2'} text-blue-500`}
@@ -601,7 +617,7 @@ export default function ChatInterface() {
                       </div>
                     )}
                     <div
-                      className={`p-3 rounded-lg max-w-[75%] md:max-w-md relative ${isMe ? 'bg-blue-500 text-white rounded-tr-none' : 'bg-white text-gray-800 shadow-sm rounded-tl-none'}`}
+                      className={`p-3 rounded-lg max-w-[75%] md:max-w-md relative ${isMe ? 'bg-blue-500 text-white rounded-tr-none' : 'bg-white text-gray-800 shadow-sm rounded-tl-none'} ${highlightedMsgId === msg.id ? 'ring-2 ring-yellow-400 ring-offset-2 animate-pulse' : ''}`}
                       style={{ transform: `translateX(${swipeOffset}px)`, transition: isSwipingThis ? 'none' : 'transform 180ms ease-out' }}
                       onContextMenu={(e) => {
                         e.preventDefault();
@@ -620,7 +636,11 @@ export default function ChatInterface() {
                       onTouchCancel={handleSwipeEnd}
                     >
                       {msg.replyTo && (
-                        <div className={`mb-2 p-2 rounded border-r-2 text-xs ${isMe ? 'bg-blue-400/50 border-white/60' : 'bg-gray-100 border-blue-400 text-gray-700'}`}>
+                        <div
+                          className={`mb-2 p-2 rounded border-r-2 text-xs cursor-pointer transition ${isMe ? 'bg-blue-400/50 border-white/60' : 'bg-gray-100 border-blue-400 text-gray-700'} hover:bg-blue-200/60`}
+                          onClick={() => scrollToMessage(msg.replyTo.messageId)}
+                          title="انتقل للرسالة الأصلية"
+                        >
                           <p className="font-semibold mb-1">رد على رسالة</p>
                           <p className="truncate">{msg.replyTo.textPreview || '[رسالة]'}</p>
                         </div>

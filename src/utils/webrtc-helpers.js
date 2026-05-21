@@ -7,6 +7,9 @@ export const getIceServers = () => {
   const turnHost = import.meta.env.VITE_TURN_HOST || window.location.hostname;
   const turnPort = import.meta.env.VITE_TURN_PORT || '3478';
   const turnsPort = import.meta.env.VITE_TURNS_PORT || '5349';
+  const turnUrl = import.meta.env.VITE_TURN_URL || `turn:${turnHost}:${turnPort}`;
+  const turnTcpUrl = import.meta.env.VITE_TURN_TCP_URL || `turn:${turnHost}:${turnPort}?transport=tcp`;
+  const turnsUrl = import.meta.env.VITE_TURNS_URL || `turns:${turnHost}:${turnsPort}?transport=tcp`;
   const turnUsername = import.meta.env.VITE_TURN_USERNAME || 'turnuser';
   const turnCredential = import.meta.env.VITE_TURN_CREDENTIAL || 'turnpassword';
 
@@ -15,19 +18,19 @@ export const getIceServers = () => {
       urls: [`stun:${turnHost}:${turnPort}`]
     },
     {
-      urls: [`turn:${turnHost}:${turnPort}`],
+      urls: [turnUrl],
       username: turnUsername,
       credential: turnCredential
     },
     // TCP relay fallback helps in restrictive networks.
     {
-      urls: [`turn:${turnHost}:${turnPort}?transport=tcp`],
+      urls: [turnTcpUrl],
       username: turnUsername,
       credential: turnCredential
     },
     // TLS TURN endpoint if enabled in coturn.
     {
-      urls: [`turns:${turnHost}:${turnsPort}?transport=tcp`],
+      urls: [turnsUrl],
       username: turnUsername,
       credential: turnCredential
     }

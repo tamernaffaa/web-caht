@@ -1,18 +1,20 @@
 # Docker Deployment on AWS EC2
 
 This setup runs the full stack in containers:
-- Frontend (React build served by Nginx)
-- Signaling server (Node.js + Express + Socket.io)
-- TURN/STUN (coturn)
+- Frontend (React build served by Nginx on 8080)
+- Signaling server (Node.js + Express + Socket.io on 3000 internal/public for debug)
+- Nginx edge proxy (80/443 for HTTPS + WSS to signaling)
+- TURN/STUN (coturn with TLS on 5349)
 
 ## 1) EC2 prerequisites
 
 Open these inbound ports in the EC2 Security Group:
 - 22/tcp (SSH)
-- 80/tcp (frontend)
-- 3000/tcp (signaling)
+- 80/tcp (Nginx edge)
+- 443/tcp (Nginx edge TLS)
+- 3000/tcp (optional direct signaling debug access)
 - 3478/tcp and 3478/udp (TURN/STUN)
-- 5349/tcp (optional TLS TURN)
+- 5349/tcp (TLS TURN)
 - 49160-49200/udp (TURN relay range)
 
 Install Docker + Compose plugin:
@@ -43,6 +45,7 @@ cp .env.docker.example .env.docker
 
 Edit `.env.docker` and replace placeholders:
 - `PUBLIC_IP`
+- `SIGNALING_DOMAIN`
 - `FRONTEND_DOMAIN`
 - Firebase values
 - VAPID key
@@ -63,7 +66,8 @@ docker compose logs -f coturn
 ```
 
 Health check:
-- `http://<EC2_PUBLIC_IP>:3000/health`
+- `http://<EC2_PUBLIC_IP>:3000/health` (direct signaling)
+- `https://<SIGNALING_DOMAIN>/health` (through Nginx edge)
 
 ## 4) Update deployment
 
@@ -81,5 +85,6 @@ docker compose --env-file .env.docker logs -f
 ```
 
 ## Notes
-- If your frontend is behind HTTPS, set `VITE_SIGNALING_SERVER` to an HTTPS/WSS endpoint to avoid mixed-content issues.
+- Keep `VITE_SIGNALING_SERVER` as `wss://<SIGNALING_DOMAIN>` to avoid mixed-content issues.
 - For restrictive networks, keep `VITE_FORCE_TURN=true`.
+- Certificates are mounted from host path `/etc/letsencrypt` into both `nginx_signaling` and `coturn` containers.

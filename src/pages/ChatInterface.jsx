@@ -646,7 +646,7 @@ export default function ChatInterface() {
   };
 
   return (
-    <div className="flex h-screen bg-gray-100 font-sans dir-rtl text-right" dir="rtl">
+    <div className="flex h-dvh md:h-screen overflow-hidden bg-gray-100 font-sans dir-rtl text-right" dir="rtl">
       
       {/* Hidden File Inputs */}
       <input type="file" ref={imageInputRef} className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, 'image')} />
@@ -657,7 +657,7 @@ export default function ChatInterface() {
       <VideoCall />
 
       {/* Sidebar */}
-      <aside className={`w-full md:w-1/3 md:max-w-sm bg-white border-l border-gray-200 flex-col relative z-20 ${activeChatId ? 'hidden md:flex' : 'flex'}`}>
+      <aside className={`w-full md:w-1/3 md:max-w-sm min-h-0 bg-white border-l border-gray-200 flex-col relative z-20 ${activeChatId ? 'hidden md:flex' : 'flex'}`}>
         <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
           <button
             type="button"
@@ -745,10 +745,10 @@ export default function ChatInterface() {
       </aside>
 
       {/* Main Chat Area */}
-      <main className={`flex-1 flex-col bg-[#efeae2] relative overflow-hidden ${!activeChatId ? 'hidden md:flex' : 'flex'}`}>
+      <main className={`flex-1 min-h-0 flex-col bg-[#efeae2] relative overflow-hidden ${!activeChatId ? 'hidden md:flex' : 'flex'}`}>
         {activeChatId ? (
           <>
-            <header className="p-4 bg-gray-50 border-b border-gray-200 flex items-center justify-between z-10">
+            <header className="sticky top-0 p-4 bg-gray-50 border-b border-gray-200 flex items-center justify-between z-20">
               <div className="flex items-center">
                 <button onClick={() => setActiveChatId(null)} className="md:hidden ml-2 p-2 -mr-2 text-gray-600 hover:bg-gray-200 rounded-full transition" aria-label="العودة">
                   <ArrowRight size={24} />
@@ -768,7 +768,7 @@ export default function ChatInterface() {
               />
             </header>
 
-            <div ref={messagesContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 space-y-4 relative">
+            <div ref={messagesContainerRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 relative">
               {hasMore && (
                 <div className="text-center py-2">
                   <span className="text-xs bg-white text-gray-500 px-3 py-1 rounded-full shadow-sm cursor-pointer hover:bg-gray-50" onClick={loadMoreMessages}>
@@ -911,7 +911,7 @@ export default function ChatInterface() {
               <div ref={messagesEndRef} />
             </div>
 
-            <footer className="p-4 bg-gray-50 flex items-center relative z-20">
+            <footer className="sticky bottom-0 p-4 bg-gray-50 flex items-center z-20 border-t border-gray-200">
               {(replyingTo || editingMessageId) && (
                 <div className="absolute bottom-16 right-4 left-4 bg-white border border-gray-200 rounded-xl px-3 py-2 flex items-center justify-between z-30">
                   <div className="text-sm text-gray-700 truncate ml-3">

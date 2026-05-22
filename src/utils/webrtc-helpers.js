@@ -40,7 +40,10 @@ export const getIceServers = () => {
 /**
  * Get user media (camera and microphone)
  */
-export const getUserMediaStream = async (isVideoEnabled = true) => {
+/**
+ * @param {boolean|object} videoOptions - true/false, or { quality: 'auto'|'low'|'medium'|'high'|{width,height}, facingMode }
+ */
+export const getUserMediaStream = async (videoOptions = true) => {
   const host = window.location.hostname;
   const isLocalhost = host === 'localhost' || host === '127.0.0.1';
   const isSecure = window.isSecureContext || isLocalhost;
@@ -53,13 +56,43 @@ export const getUserMediaStream = async (isVideoEnabled = true) => {
     throw new Error('المتصفح الحالي لا يدعم getUserMedia. استخدم Chrome أو Safari وافتح الرابط خارج المتصفح الداخلي للتطبيقات.');
   }
 
+  let videoConstraint = false;
+  if (typeof videoOptions === 'boolean') {
+    videoConstraint = videoOptions ? { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' } : false;
+  } else if (typeof videoOptions === 'object') {
+    let quality = videoOptions.quality || 'auto';
+    let facingMode = videoOptions.facingMode || 'user';
+    if (quality === 'auto') {
+      // Use network info if available
+      let downlink = 2.5, effectiveType = '4g';
+      if (navigator.connection) {
+        downlink = navigator.connection.downlink || downlink;
+        effectiveType = navigator.connection.effectiveType || effectiveType;
+      }
+      if (downlink < 0.7 || effectiveType === '2g') {
+        quality = 'low';
+      } else if (downlink < 1.5 || effectiveType === '3g') {
+        quality = 'medium';
+      } else {
+        quality = 'high';
+      }
+    }
+    if (quality === 'low') {
+      videoConstraint = { width: { ideal: 320 }, height: { ideal: 240 }, facingMode };
+    } else if (quality === 'medium') {
+      videoConstraint = { width: { ideal: 640 }, height: { ideal: 480 }, facingMode };
+    } else if (quality === 'high') {
+      videoConstraint = { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode };
+    } else if (typeof quality === 'object' && quality.width && quality.height) {
+      videoConstraint = { width: { ideal: quality.width }, height: { ideal: quality.height }, facingMode };
+    } else {
+      videoConstraint = { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode };
+    }
+  }
+
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: isVideoEnabled ? {
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        facingMode: 'user'
-      } : false,
+      video: videoConstraint,
       audio: true
     });
     return stream;

@@ -90,7 +90,7 @@ export function CallProvider({ children }) {
   // Core Actions
   // --------------------------
 
-  const startCall = async (targetUserId, roomId, isVideo = true, otherUserName = 'المستخدم') => {
+  const startCall = async (targetUserId, roomId, isVideo = true, otherUserName = 'المستخدم', videoOptions = {}) => {
     try {
       if (!socket || !isConnected) {
         const details = connectionError ? `\nالسبب: ${connectionError}` : '';
@@ -106,7 +106,7 @@ export function CallProvider({ children }) {
       activeCallRef.current = callData;
 
       // 1. Get Local Media
-      const stream = await getUserMediaStream(isVideo);
+      const stream = await getUserMediaStream(isVideo ? videoOptions : false);
       setLocalStream(stream);
       localStreamRef.current = stream;
 
@@ -125,6 +125,7 @@ export function CallProvider({ children }) {
     }
   };
 
+  // acceptVideo: true/false or { quality, ... }
   const answerCall = async (acceptVideo = true) => {
     if (!incomingCallData) return;
     if (!socket || !isConnected) {

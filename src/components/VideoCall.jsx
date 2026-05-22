@@ -3,8 +3,7 @@ import { Mic, MicOff, Video, VideoOff, PhoneOff, Maximize, Minimize, Camera } fr
 import { useCall } from '../contexts/CallContext';
 import { toggleTrack, switchCamera } from '../utils/webrtc-helpers';
 
-export default function VideoCall() {
-  const { callState, activeCallData, localStream, remoteStream, endCall } = useCall();
+  const { callState, activeCallData, localStream, remoteStream, endCall, startCall, answerCall, incomingCallData } = useCall();
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   
@@ -12,6 +11,10 @@ export default function VideoCall() {
   const [isVideoOff, setIsVideoOff] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [timer, setTimer] = useState(0);
+  const [videoQuality, setVideoQuality] = useState('auto');
+  // Handle quality change and restart stream if needed (future: hot switch)
+  // For now, only used at call start/answer
+
 
   // Set video sources
   useEffect(() => {
@@ -67,6 +70,83 @@ export default function VideoCall() {
       setIsFullscreen(false);
     }
   };
+
+
+  // Show quality selector before answering/initiating
+  if (callState === 'ringing' && incomingCallData) {
+    return (
+      <div className="fixed inset-0 bg-gray-900/90 z-40 flex flex-col items-center justify-center text-white dir-rtl" dir="rtl">
+        <div className="bg-gray-800 rounded-2xl p-8 flex flex-col items-center gap-6 shadow-2xl">
+          <h2 className="text-2xl font-bold mb-2">مكالمة واردة من {incomingCallData.caller?.name || 'مستخدم'}</h2>
+          <div className="flex flex-col gap-2 w-full">
+            <label className="text-lg font-semibold">جودة الفيديو:</label>
+            <select
+              className="p-2 rounded bg-gray-700 text-white focus:outline-none"
+              value={videoQuality}
+              onChange={e => setVideoQuality(e.target.value)}
+            >
+              <option value="auto">تلقائي (حسب الشبكة)</option>
+              <option value="low">منخفضة (أقل استهلاك)</option>
+              <option value="medium">متوسطة</option>
+              <option value="high">عالية (HD)</option>
+            </select>
+          </div>
+          <div className="flex gap-6 mt-4">
+            <button
+              className="px-6 py-2 rounded bg-green-600 hover:bg-green-700 text-white font-bold text-lg"
+              onClick={() => answerCall({ quality: videoQuality })}
+            >
+              قبول المكالمة
+            </button>
+            <button
+              className="px-6 py-2 rounded bg-red-600 hover:bg-red-700 text-white font-bold text-lg"
+              onClick={endCall}
+            >
+              رفض
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Outgoing call: allow quality selection before connecting
+  if (callState === 'calling' && activeCallData && !localStream) {
+    return (
+      <div className="fixed inset-0 bg-gray-900/90 z-40 flex flex-col items-center justify-center text-white dir-rtl" dir="rtl">
+        <div className="bg-gray-800 rounded-2xl p-8 flex flex-col items-center gap-6 shadow-2xl">
+          <h2 className="text-2xl font-bold mb-2">بدء مكالمة فيديو مع {activeCallData.otherUserName || 'مستخدم'}</h2>
+          <div className="flex flex-col gap-2 w-full">
+            <label className="text-lg font-semibold">جودة الفيديو:</label>
+            <select
+              className="p-2 rounded bg-gray-700 text-white focus:outline-none"
+              value={videoQuality}
+              onChange={e => setVideoQuality(e.target.value)}
+            >
+              <option value="auto">تلقائي (حسب الشبكة)</option>
+              <option value="low">منخفضة (أقل استهلاك)</option>
+              <option value="medium">متوسطة</option>
+              <option value="high">عالية (HD)</option>
+            </select>
+          </div>
+          <div className="flex gap-6 mt-4">
+            <button
+              className="px-6 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg"
+              onClick={() => startCall(activeCallData.targetUserId, activeCallData.roomId, true, activeCallData.otherUserName, { quality: videoQuality })}
+            >
+              بدء المكالمة
+            </button>
+            <button
+              className="px-6 py-2 rounded bg-red-600 hover:bg-red-700 text-white font-bold text-lg"
+              onClick={endCall}
+            >
+              إلغاء
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (callState !== 'calling' && callState !== 'connected') return null;
 

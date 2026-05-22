@@ -158,11 +158,13 @@ export const switchCamera = async (currentStream) => {
 
     const newVideoTrack = newStream.getVideoTracks()[0];
     
-    // Remove old video track and add new one
-    currentStream.removeTrack(currentVideoTrack);
+    // Remove all old video tracks (Safari needs this)
+    currentStream.getVideoTracks().forEach(track => {
+      currentStream.removeTrack(track);
+      track.stop();
+    });
     currentStream.addTrack(newVideoTrack);
-    
-    return { newStream: currentStream, newVideoTrack };
+    return { newStream: currentStream, newVideoTrack, oldVideoTrack: currentVideoTrack };
   } catch (error) {
     console.error("Error switching camera:", error);
     return null;

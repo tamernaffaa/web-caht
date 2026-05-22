@@ -61,11 +61,19 @@ function VideoCall() {
     const result = await switchCamera(localStream);
     if (!result || !result.newVideoTrack) return;
     // Replace track in peer connection if possible
+    let replaced = false;
     if (peerRef?.current && typeof peerRef.current.replaceTrack === 'function') {
-      const oldTrack = localStream.getVideoTracks().find(t => t.readyState === 'ended') || localStream.getVideoTracks()[0];
-      peerRef.current.replaceTrack(oldTrack, result.newVideoTrack, localStream);
+      try {
+        peerRef.current.replaceTrack(result.oldVideoTrack, result.newVideoTrack, localStream);
+        replaced = true;
+      } catch (e) {
+        replaced = false;
+      }
     }
-    // No need to update localStream, as switchCamera already does it
+    // Fallback: if replaceTrack not supported or failed, show message to user to إعادة الاتصال
+    if (!replaced && /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent)) {
+      alert('تبديل الكاميرا غير مدعوم بالكامل في Safari. يرجى إنهاء المكالمة ثم إعادة الاتصال لاختيار الكاميرا.');
+    }
     // UI will update via useEffect on localStream
   };
 

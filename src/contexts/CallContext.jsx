@@ -3,6 +3,7 @@ import Peer from 'simple-peer';
 import { useSocket } from '../hooks/useSocket';
 import { useAuth } from '../context/AuthContext';
 import { getIceServers, getUserMediaStream, stopMediaStream } from '../utils/webrtc-helpers';
+import { soundManager } from '../utils/sound-manager';
 import { db } from '../firebase/config';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
@@ -32,7 +33,6 @@ export function CallProvider({ children }) {
   const [remoteStream, setRemoteStream] = useState(null);
 
   const peerRef = useRef(null);
-  const audioRef = useRef(null);
   const localStreamRef = useRef(null);
   const activeCallRef = useRef(null);
 
@@ -48,11 +48,15 @@ export function CallProvider({ children }) {
         socket.emit('reject-call', { targetUserId: data.caller.uid, roomId: data.roomId });
         return;
       }
+      soundManager.stopAllRingtones();
+      soundManager.startIncomingRingtone();
       setIncomingCallData(data);
       setCallState('ringing');
     });
 
     socket.on('call-answered', ({ roomId }) => {
+      soundManager.stopAllRingtones();
+      soundManager.playCallConnected();
       const currentCall = activeCallRef.current;
       const currentStream = localStreamRef.current;
       if (!peerRef.current && currentCall && currentStream) {
@@ -62,11 +66,15 @@ export function CallProvider({ children }) {
     });
 
     socket.on('call-rejected', ({ roomId }) => {
+      soundManager.stopAllRingtones();
+      soundManager.playCallEnded();
       cleanupCall();
       alert('تم رفض المكالمة');
     });
 
     socket.on('call-ended', ({ roomId }) => {
+      soundManager.stopAllRingtones();
+      soundManager.playCallEnded();
       cleanupCall();
     });
 
@@ -91,6 +99,8 @@ export function CallProvider({ children }) {
       }
 
       setCallState('calling');
+      soundManager.stopAllRingtones();
+      soundManager.startOutgoingRingback();
       const callData = { roomId, targetUserId, isVideo, otherUserName };
       setActiveCallData(callData);
       activeCallRef.current = callData;
@@ -122,10 +132,7 @@ export function CallProvider({ children }) {
       return;
     }
 
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-    }
+    soundManager.stopAllRingtones();
 
     try {
       const stream = await getUserMediaStream(acceptVideo);
@@ -147,6 +154,7 @@ export function CallProvider({ children }) {
       // Create Peer (Not Initiator) BEFORE notifying caller to avoid losing first offer.
       createPeer(incomingCallData.caller.uid, incomingCallData.roomId, stream, false);
       setCallState('connected');
+      soundManager.playCallConnected();
 
       // Notify caller
       emitIfConnected('answer-call', {
@@ -168,10 +176,8 @@ export function CallProvider({ children }) {
         roomId: incomingCallData.roomId 
       });
     }
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-    }
+    soundManager.stopAllRingtones();
+    soundManager.playCallEnded();
     cleanupCall();
   };
 
@@ -191,6 +197,8 @@ export function CallProvider({ children }) {
         console.error("Error saving call log", e);
       }
     }
+    soundManager.stopAllRingtones();
+    soundManager.playCallEnded();
     cleanupCall();
   };
 
@@ -249,6 +257,7 @@ export function CallProvider({ children }) {
   };
 
   const cleanupCall = () => {
+    soundManager.stopAllRingtones();
     setCallState('idle');
     setActiveCallData(null);
     activeCallRef.current = null;

@@ -26,6 +26,7 @@ export function useMessages(chatId) {
   const [hasMore, setHasMore] = useState(true);
   const lastDocRef = useRef(null);
   const receiptsUpdatingRef = useRef(false);
+  const seenUpdatingRef = useRef(false);
   
   const MESSAGES_LIMIT = 20;
 
@@ -102,6 +103,44 @@ export function useMessages(chatId) {
       }
     };
 
+    const applySeenReceipts = async (docs) => {
+      if (!currentUser?.uid || seenUpdatingRef.current || !chatId) return;
+
+      const batch = writeBatch(db);
+      let updatesCount = 0;
+
+      docs.forEach((snapshotDoc) => {
+        const data = snapshotDoc.data();
+        if (data.senderId === currentUser.uid) return;
+        if (data.seenTo && data.seenTo[currentUser.uid]) return;
+
+        batch.update(snapshotDoc.ref, {
+          [`seenTo.${currentUser.uid}`]: serverTimestamp(),
+          [`deliveredTo.${currentUser.uid}`]: data.deliveredTo?.[currentUser.uid] || serverTimestamp()
+        });
+        updatesCount += 1;
+      });
+
+      // Keep unread counter in sync instantly for active chat.
+      if (updatesCount > 0) {
+        const chatRef = doc(db, 'chats', chatId);
+        batch.update(chatRef, {
+          [`unreadCount.${currentUser.uid}`]: 0,
+          [`lastReadAt.${currentUser.uid}`]: serverTimestamp()
+        });
+      }
+
+      if (!updatesCount) return;
+      seenUpdatingRef.current = true;
+      try {
+        await batch.commit();
+      } catch (error) {
+        console.error('Failed to apply seen receipts:', error);
+      } finally {
+        seenUpdatingRef.current = false;
+      }
+    };
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
       if (snapshot.docs.length > 0) {
         lastDocRef.current = snapshot.docs[snapshot.docs.length - 1];
@@ -118,7 +157,7 @@ export function useMessages(chatId) {
         id: doc.id,
         status: 'sent',
         ...doc.data()
-      })).reverse(); // Reverse because we ordered by desc, but we want old->new visually
+      })).reverse(); // Query is desc; reverse for UI old->new
 
       setServerMessages(msgs);
 
@@ -133,10 +172,11 @@ export function useMessages(chatId) {
       setLoading(false);
 
       applyDeliveryReceipts(snapshot.docs);
+      applySeenReceipts(snapshot.docs);
     });
 
     return () => unsubscribe();
-  }, [chatId]);
+  }, [chatId, currentUser?.uid]);
 
   // Load more old messages (Pagination)
   const loadMoreMessages = async () => {
@@ -161,6 +201,7 @@ export function useMessages(chatId) {
           ...doc.data()
         })).reverse();
         
+        // Older chunk should be added before current list in old->new UI.
         setServerMessages(prev => [...oldMsgs, ...prev]);
         
         if (snapshot.docs.length < MESSAGES_LIMIT) {

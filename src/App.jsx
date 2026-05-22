@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { CallProvider } from './contexts/CallContext';
 import { usePresence } from './hooks/usePresence';
 import { usePushNotifications } from './hooks/usePushNotifications';
+import { soundManager } from './utils/sound-manager';
 import Login from './pages/Login';
 import ChatInterface from './pages/ChatInterface';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -19,6 +20,11 @@ const PublicRoute = ({ children }) => {
 function GlobalHooks() {
   usePresence();
   usePushNotifications();
+
+  React.useEffect(() => {
+    soundManager.init();
+  }, []);
+
   return null;
 }
 

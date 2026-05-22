@@ -5,7 +5,9 @@ import { useMessages } from '../hooks/useMessages';
 import { useUsers } from '../hooks/useUsers';
 import { useMediaStorage } from '../hooks/useMediaStorage';
 import { listenToUserPresence, listenToTyping, setTypingStatus } from '../hooks/usePresence';
-import { LogOut, Plus, Search, Send, User, Paperclip, Image as ImageIcon, FileText, MapPin, Mic, Square, Loader, ArrowRight, Reply, Pencil, Trash2, X, Check, CheckCheck, ArrowDown } from 'lucide-react';
+import { buildNewestMessageKey, shouldIncrementNewMessageCount } from '../utils/chat-behavior';
+import { soundManager } from '../utils/sound-manager';
+import { LogOut, Plus, Search, Send, User, Paperclip, Image as ImageIcon, FileText, MapPin, Mic, Square, Loader, ArrowRight, Reply, Pencil, Trash2, X, Check, CheckCheck, ArrowDown, SlidersHorizontal } from 'lucide-react';
 
 // Call Components
 import CallButton from '../components/CallButton';
@@ -21,6 +23,7 @@ export default function ChatInterface() {
   const [activeChatId, setActiveChatId] = useState(null);
   const [messageText, setMessageText] = useState('');
   const [showUsersList, setShowUsersList] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [otherUserStatus, setOtherUserStatus] = useState(null);
@@ -57,6 +60,15 @@ export default function ChatInterface() {
     e.target.src = fallbackAvatar;
   };
 
+  const updateSoundSettings = (partial) => {
+    const next = soundManager.updateSettings(partial);
+    setSoundSettings(next);
+  };
+
+  const setVolumeLevel = (level) => {
+    updateSoundSettings({ volumeLevel: level });
+  };
+
   const {
     messages,
     loading: msgsLoading,
@@ -71,8 +83,15 @@ export default function ChatInterface() {
   
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
+  const previousUnreadByChatRef = useRef({});
+  const unreadTrackerInitializedRef = useRef(false);
+  const initialScrollDoneRef = useRef(false);
+  const userBrowsingHistoryRef = useRef(false);
+  const lastNewestMessageKeyRef = useRef('');
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [newMsgWhileAway, setNewMsgWhileAway] = useState(false);
+  const [newMsgCount, setNewMsgCount] = useState(0);
+  const [soundSettings, setSoundSettings] = useState(() => soundManager.getSettings());
   const imageInputRef = useRef(null);
   const docInputRef = useRef(null);
   
@@ -83,34 +102,139 @@ export default function ChatInterface() {
   const longPressTimerRef = useRef(null);
   const swipeGestureRef = useRef({ messageId: null, startX: 0, startY: 0, triggered: false });
 
-  // Scroll to bottom helper
+  // Scroll to bottom helper (direct container scroll is more reliable than scrollIntoView).
   const scrollToBottom = (smooth = true) => {
+    userBrowsingHistoryRef.current = false;
+    const el = messagesContainerRef.current;
+    if (!el) return;
+
+    const behavior = smooth ? 'smooth' : 'auto';
+    el.scrollTo({ top: el.scrollHeight, behavior });
+
+    // Retry after paint to handle async height changes (images/audio/layout).
+    requestAnimationFrame(() => {
+      const nextEl = messagesContainerRef.current;
+      if (!nextEl) return;
+      nextEl.scrollTo({ top: nextEl.scrollHeight, behavior: 'auto' });
+      requestAnimationFrame(() => {
+        const finalEl = messagesContainerRef.current;
+        if (!finalEl) return;
+        finalEl.scrollTop = finalEl.scrollHeight;
+      });
+    });
+
     if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
+      messagesEndRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
     }
+
+    // Ensure the flag stays in sync after layout settles.
+    requestAnimationFrame(() => {
+      const latestEl = messagesContainerRef.current;
+      if (!latestEl) return;
+      const atBottom = latestEl.scrollHeight - latestEl.scrollTop - latestEl.clientHeight < 80;
+      userBrowsingHistoryRef.current = !atBottom;
+      if (atBottom) {
+        setNewMsgWhileAway(false);
+        setNewMsgCount(0);
+      }
+    });
   };
 
-  // Auto scroll to bottom on new messages if user is at bottom
+  // Auto scroll on genuinely new latest message unless user is browsing old messages.
   useEffect(() => {
     if (!messagesContainerRef.current) return;
-    const el = messagesContainerRef.current;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
-    if (atBottom) {
+    if (!messages.length) return;
+
+    const newest = messages[messages.length - 1];
+    const newestKey = buildNewestMessageKey(newest);
+    const prevKey = lastNewestMessageKeyRef.current;
+    lastNewestMessageKeyRef.current = newestKey;
+
+    if (!prevKey || prevKey === newestKey) return;
+
+    if (!userBrowsingHistoryRef.current) {
+      if (newest?.senderId !== currentUser?.uid) {
+        soundManager.playMessageReceived();
+      }
       scrollToBottom(false);
       setNewMsgWhileAway(false);
+      setNewMsgCount(0);
     } else {
       setNewMsgWhileAway(true);
+      if (shouldIncrementNewMessageCount({
+        isBrowsingHistory: userBrowsingHistoryRef.current,
+        isIncomingMessage: newest?.senderId !== currentUser?.uid
+      })) {
+        soundManager.playMessageReceived();
+        setNewMsgCount((prev) => prev + 1);
+      }
     }
-  }, [messages, uploading]);
+  }, [messages, currentUser?.uid]);
+
+  // Non-active chats: play one receive sound when unread count increases.
+  useEffect(() => {
+    if (!currentUser?.uid) return;
+
+    const nextUnreadByChat = {};
+    let hasIncrease = false;
+
+    chats.forEach((chat) => {
+      const unread = chat.unreadCount?.[currentUser.uid] || 0;
+      nextUnreadByChat[chat.id] = unread;
+
+      if (!unreadTrackerInitializedRef.current) return;
+      if (chat.id === activeChatId) return;
+
+      const prevUnread = previousUnreadByChatRef.current[chat.id] || 0;
+      if (unread > prevUnread) {
+        hasIncrease = true;
+      }
+    });
+
+    if (unreadTrackerInitializedRef.current && hasIncrease) {
+      soundManager.playMessageReceived();
+    }
+
+    previousUnreadByChatRef.current = nextUnreadByChat;
+    unreadTrackerInitializedRef.current = true;
+  }, [chats, activeChatId, currentUser?.uid]);
+
+  // On first open of a chat, jump to latest messages (bottom), like WhatsApp.
+  useEffect(() => {
+    initialScrollDoneRef.current = false;
+    userBrowsingHistoryRef.current = false;
+    lastNewestMessageKeyRef.current = '';
+    setNewMsgCount(0);
+  }, [activeChatId]);
+
+  useEffect(() => {
+    if (!activeChatId) return;
+    if (initialScrollDoneRef.current) return;
+    if (msgsLoading) return;
+    if (!messages.length) return;
+
+    scrollToBottom(false);
+    userBrowsingHistoryRef.current = false;
+    const newest = messages[messages.length - 1];
+    lastNewestMessageKeyRef.current = buildNewestMessageKey(newest);
+    setNewMsgWhileAway(false);
+    setNewMsgCount(0);
+    initialScrollDoneRef.current = true;
+  }, [activeChatId, msgsLoading, messages.length]);
 
   // Show/hide scroll-to-bottom button on scroll
   useEffect(() => {
     const el = messagesContainerRef.current;
     if (!el) return;
     const handle = () => {
-      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      const atBottom = distanceFromBottom < 80;
+      userBrowsingHistoryRef.current = distanceFromBottom > 120;
       setShowScrollToBottom(!atBottom);
-      if (atBottom) setNewMsgWhileAway(false);
+      if (atBottom) {
+        setNewMsgWhileAway(false);
+        setNewMsgCount(0);
+      }
     };
     el.addEventListener('scroll', handle);
     handle();
@@ -118,32 +242,49 @@ export default function ChatInterface() {
   }, [activeChatId]);
 
   const handleScroll = (e) => {
-    if (e.target.scrollTop === 0 && hasMore && !msgsLoading) {
+    if (e.target.scrollTop <= 2 && hasMore && !msgsLoading) {
       loadMoreMessages();
     }
   };
 
   const handleSendMessage = async (e) => {
     e.preventDefault();
-    if (!messageText.trim()) return;
+    const trimmedText = messageText.trim();
+    if (!trimmedText) return;
 
     if (editingMessageId) {
-      await editMessage(editingMessageId, messageText);
+      const editTargetId = editingMessageId;
+      const editedText = trimmedText;
+
+      // Clear immediately in edit mode as well.
+      setMessageText('');
       setEditingMessageId(null);
       setReplyingTo(null);
-      setMessageText('');
       if (activeChatId && currentUser?.uid) {
         setTypingStatus(activeChatId, currentUser.uid, false).catch(() => {});
       }
+
+      editMessage(editTargetId, editedText).catch((error) => {
+        console.error('Edit message failed:', error);
+      });
       return;
     }
 
-    await sendMessage(messageText, 'text', null, { replyTo: replyingTo });
+    const textToSend = trimmedText;
+    const replyToMessage = replyingTo;
+
+    // Optimistic clear: don't keep text in input while waiting on slow network.
     setMessageText('');
     setReplyingTo(null);
     if (activeChatId && currentUser?.uid) {
       setTypingStatus(activeChatId, currentUser.uid, false).catch(() => {});
     }
+
+    soundManager.playMessageSent();
+
+    sendMessage(textToSend, 'text', null, { replyTo: replyToMessage }).catch((error) => {
+      console.error('Send message failed:', error);
+    });
   };
 
   const handleMessageInputChange = (value) => {
@@ -518,7 +659,12 @@ export default function ChatInterface() {
       {/* Sidebar */}
       <aside className={`w-full md:w-1/3 md:max-w-sm bg-white border-l border-gray-200 flex-col relative z-20 ${activeChatId ? 'hidden md:flex' : 'flex'}`}>
         <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
-          <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setShowProfileModal(true)}
+            className="flex items-center gap-3 rounded-lg px-1 py-1 hover:bg-gray-100 transition"
+            title="الملف الشخصي والإعدادات"
+          >
             <img 
               src={currentUser?.avatar || currentUser?.photoURL || `https://ui-avatars.com/api/?name=${currentUser?.name || currentUser?.displayName || currentUser?.email?.charAt(0) || 'U'}&background=random`} 
               alt="avatar" 
@@ -526,8 +672,11 @@ export default function ChatInterface() {
               onError={handleImageError}
             />
             <h2 className="text-xl font-semibold text-gray-800">المحادثات</h2>
-          </div>
+          </button>
           <div className="flex gap-2">
+            <button onClick={() => setShowProfileModal(true)} className="p-2 text-gray-600 hover:bg-gray-200 rounded-full transition" title="الملف الشخصي والإعدادات">
+              <SlidersHorizontal size={20} />
+            </button>
             <button onClick={() => setShowUsersList(!showUsersList)} className="p-2 text-gray-600 hover:bg-gray-200 rounded-full transition" title="محادثة جديدة">
               <Plus size={20} />
             </button>
@@ -572,7 +721,7 @@ export default function ChatInterface() {
                     <div className="flex justify-between items-baseline mb-1">
                       <h3 className="font-semibold text-gray-900 truncate">{otherUser?.name || 'مستخدم'}</h3>
                       <div className="flex items-center gap-2">
-                        {unreadCount > 0 && (
+                        {!isActive && unreadCount > 0 && (
                           <span className="text-[10px] bg-blue-600 text-white rounded-full min-w-5 h-5 px-1 inline-flex items-center justify-center">
                             {unreadCount > 99 ? '99+' : unreadCount}
                           </span>
@@ -627,7 +776,7 @@ export default function ChatInterface() {
                   </span>
                 </div>
               )}
-              
+
               {messages.map((msg, idx) => {
                 const isMe = msg.senderId === currentUser.uid;
                 const timeString = msg.timestamp?.toDate().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) || '';
@@ -848,13 +997,19 @@ export default function ChatInterface() {
             {showScrollToBottom && (
               <button
                 type="button"
-                onClick={() => scrollToBottom()}
+                onClick={() => {
+                  scrollToBottom();
+                }}
                 className="absolute bottom-[88px] left-4 md:left-auto md:right-6 z-40 bg-blue-600 text-white rounded-full shadow-lg p-3 hover:bg-blue-700 transition flex items-center gap-1 animate-fade-in"
                 style={{ minWidth: 48, minHeight: 48 }}
                 aria-label="الانتقال لآخر المحادثة"
               >
                 <ArrowDown size={26} />
-                {newMsgWhileAway && <span className="w-2 h-2 bg-red-500 rounded-full ml-1 animate-pulse"></span>}
+                {newMsgWhileAway && (
+                  <span className="ml-1 min-w-5 h-5 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold inline-flex items-center justify-center animate-pulse">
+                    {newMsgCount > 99 ? '99+' : newMsgCount || 1}
+                  </span>
+                )}
               </button>
             )}
           </>
@@ -913,6 +1068,118 @@ export default function ChatInterface() {
             >
               إلغاء
             </button>
+          </div>
+        </>
+      )}
+
+      {showProfileModal && (
+        <>
+          <div className="fixed inset-0 z-50 bg-black/35" onClick={() => setShowProfileModal(false)}></div>
+          <div className="fixed z-[60] inset-x-3 top-8 md:inset-x-auto md:right-8 md:w-[420px] bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-200 flex items-center justify-between bg-gray-50">
+              <div className="flex items-center gap-2 text-gray-800">
+                <SlidersHorizontal size={18} />
+                <h3 className="font-semibold">الملف الشخصي والإعدادات</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowProfileModal(false)}
+                className="p-1 rounded-md text-gray-500 hover:bg-gray-200"
+                aria-label="إغلاق"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-5 max-h-[75vh] overflow-y-auto">
+              <div className="flex items-center gap-3">
+                <img
+                  src={currentUser?.avatar || currentUser?.photoURL || `https://ui-avatars.com/api/?name=${currentUser?.name || currentUser?.displayName || currentUser?.email?.charAt(0) || 'U'}&background=random`}
+                  alt="avatar"
+                  className="w-14 h-14 rounded-full object-cover bg-gray-200"
+                  onError={handleImageError}
+                />
+                <div>
+                  <p className="font-semibold text-gray-800">{currentUser?.name || currentUser?.displayName || 'المستخدم'}</p>
+                  <p className="text-xs text-gray-500">{currentUser?.email || 'بدون بريد'}</p>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-gray-200 p-4 space-y-4">
+                <h4 className="font-semibold text-gray-800">إعدادات الصوت</h4>
+
+                <label className="flex items-center justify-between gap-3 cursor-pointer">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">كتم كل الأصوات</p>
+                    <p className="text-xs text-gray-500">إيقاف جميع أصوات الرسائل والمكالمات</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={!soundSettings.masterEnabled}
+                    onChange={(e) => updateSoundSettings({ masterEnabled: !e.target.checked })}
+                    className="w-5 h-5 accent-blue-600"
+                  />
+                </label>
+
+                <label className="flex items-center justify-between gap-3 cursor-pointer">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">تعطيل أصوات الرسائل فقط</p>
+                    <p className="text-xs text-gray-500">يشمل صوت الإرسال والاستلام</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={!soundSettings.messageSoundsEnabled}
+                    onChange={(e) => updateSoundSettings({ messageSoundsEnabled: !e.target.checked })}
+                    disabled={!soundSettings.masterEnabled}
+                    className="w-5 h-5 accent-blue-600 disabled:opacity-40"
+                  />
+                </label>
+
+                <label className="flex items-center justify-between gap-3 cursor-pointer">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">تعطيل أصوات المكالمات فقط</p>
+                    <p className="text-xs text-gray-500">يشمل الرنين وأصوات بداية/نهاية المكالمة</p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={!soundSettings.callSoundsEnabled}
+                    onChange={(e) => updateSoundSettings({ callSoundsEnabled: !e.target.checked })}
+                    disabled={!soundSettings.masterEnabled}
+                    className="w-5 h-5 accent-blue-600 disabled:opacity-40"
+                  />
+                </label>
+
+                <div>
+                  <p className="text-sm font-medium text-gray-800 mb-2">مستوى الصوت</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setVolumeLevel('low')}
+                      disabled={!soundSettings.masterEnabled}
+                      className={`px-3 py-2 rounded-lg text-sm border transition ${soundSettings.volumeLevel === 'low' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'} disabled:opacity-40`}
+                    >
+                      Low
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVolumeLevel('normal')}
+                      disabled={!soundSettings.masterEnabled}
+                      className={`px-3 py-2 rounded-lg text-sm border transition ${soundSettings.volumeLevel === 'normal' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'} disabled:opacity-40`}
+                    >
+                      Normal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVolumeLevel('high')}
+                      disabled={!soundSettings.masterEnabled}
+                      className={`px-3 py-2 rounded-lg text-sm border transition ${soundSettings.volumeLevel === 'high' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300'} disabled:opacity-40`}
+                    >
+                      High
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </>
       )}

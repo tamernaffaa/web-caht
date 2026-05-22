@@ -57,7 +57,16 @@ function VideoCall() {
 
   const handleSwitchCamera = async () => {
     if (!localStream) return;
-    await switchCamera(localStream);
+    // Switch camera and update peer track if needed
+    const result = await switchCamera(localStream);
+    if (!result || !result.newVideoTrack) return;
+    // Replace track in peer connection if possible
+    if (window?.peerRef?.current && typeof window.peerRef.current.replaceTrack === 'function') {
+      const oldTrack = localStream.getVideoTracks().find(t => t.readyState === 'ended');
+      window.peerRef.current.replaceTrack(oldTrack, result.newVideoTrack, localStream);
+    }
+    // No need to update localStream, as switchCamera already does it
+    // UI will update via useEffect on localStream
   };
 
   const toggleFullscreen = () => {

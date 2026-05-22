@@ -350,7 +350,8 @@ export function CallProvider({ children }) {
     answerCall,
     changeVideoQuality,
     rejectCall,
-    endCall
+    endCall,
+    peerRef // expose peerRef for direct access
   };
 
   return (

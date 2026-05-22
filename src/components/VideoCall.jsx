@@ -4,7 +4,7 @@ import { useCall } from '../contexts/CallContext';
 import { toggleTrack, switchCamera } from '../utils/webrtc-helpers';
 
 function VideoCall() {
-  const { callState, activeCallData, localStream, remoteStream, endCall, answerCall, incomingCallData, changeVideoQuality } = useCall();
+  const { callState, activeCallData, localStream, remoteStream, endCall, answerCall, incomingCallData, changeVideoQuality, peerRef } = useCall();
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   
@@ -61,9 +61,9 @@ function VideoCall() {
     const result = await switchCamera(localStream);
     if (!result || !result.newVideoTrack) return;
     // Replace track in peer connection if possible
-    if (window?.peerRef?.current && typeof window.peerRef.current.replaceTrack === 'function') {
-      const oldTrack = localStream.getVideoTracks().find(t => t.readyState === 'ended');
-      window.peerRef.current.replaceTrack(oldTrack, result.newVideoTrack, localStream);
+    if (peerRef?.current && typeof peerRef.current.replaceTrack === 'function') {
+      const oldTrack = localStream.getVideoTracks().find(t => t.readyState === 'ended') || localStream.getVideoTracks()[0];
+      peerRef.current.replaceTrack(oldTrack, result.newVideoTrack, localStream);
     }
     // No need to update localStream, as switchCamera already does it
     // UI will update via useEffect on localStream

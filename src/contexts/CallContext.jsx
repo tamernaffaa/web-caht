@@ -23,10 +23,11 @@ export function CallProvider({ children }) {
     return true;
   };
 
-  // Call States: idle, calling, ringing, connected, ended
+  // Call States: idle, calling, ringing, connected, ended, error
   const [callState, setCallState] = useState('idle'); 
   const [incomingCallData, setIncomingCallData] = useState(null);
   const [activeCallData, setActiveCallData] = useState(null); // { roomId, targetUserId, isVideo }
+  const [callError, setCallError] = useState(null); // { type, message }
   
   // Media Streams
   const [localStream, setLocalStream] = useState(null);
@@ -68,8 +69,9 @@ export function CallProvider({ children }) {
     socket.on('call-rejected', ({ roomId }) => {
       soundManager.stopAllRingtones();
       soundManager.playCallEnded();
+      setCallError({ type: 'rejected', message: 'تم رفض المكالمة من الطرف الآخر.' });
+      setCallState('error');
       cleanupCall();
-      alert('تم رفض المكالمة');
     });
 
     socket.on('call-ended', ({ roomId }) => {
@@ -90,11 +92,28 @@ export function CallProvider({ children }) {
   // Core Actions
   // --------------------------
 
+
+  // Timeout for unanswered calls (e.g. other user offline)
+  useEffect(() => {
+    let timeout;
+    if (callState === 'calling') {
+      timeout = setTimeout(() => {
+        soundManager.stopAllRingtones();
+        soundManager.playCallEnded();
+        setCallError({ type: 'timeout', message: 'تعذر الاتصال بالطرف الآخر. قد يكون غير متصل بالإنترنت أو لم يرد.' });
+        setCallState('error');
+        cleanupCall();
+      }, 25000); // 25 ثانية انتظار
+    }
+    return () => clearTimeout(timeout);
+  }, [callState]);
+
   const startCall = async (targetUserId, roomId, isVideo = true, otherUserName = 'المستخدم', videoOptions = {}) => {
     try {
       if (!socket || !isConnected) {
         const details = connectionError ? `\nالسبب: ${connectionError}` : '';
-        alert(`جاري الاتصال بالخادم، حاول مرة أخرى خلال لحظة.${details}`);
+        setCallError({ type: 'network', message: `جاري الاتصال بالخادم، حاول مرة أخرى خلال لحظة.${details}` });
+        setCallState('error');
         return;
       }
 
@@ -120,7 +139,8 @@ export function CallProvider({ children }) {
 
     } catch (err) {
       console.error(err);
-      alert(err?.message || 'فشل بدء المكالمة.');
+      setCallError({ type: 'start-fail', message: err?.message || 'فشل بدء المكالمة.' });
+      setCallState('error');
       cleanupCall();
     }
   };
@@ -129,7 +149,8 @@ export function CallProvider({ children }) {
   const answerCall = async (acceptVideo = true) => {
     if (!incomingCallData) return;
     if (!socket || !isConnected) {
-      alert('الاتصال بالخادم غير متاح حاليًا.');
+      setCallError({ type: 'network', message: 'الاتصال بالخادم غير متاح حاليًا.' });
+      setCallState('error');
       return;
     }
 
@@ -169,7 +190,8 @@ export function CallProvider({ children }) {
       setIncomingCallData(null);
     } catch (err) {
       console.error(err);
-      alert(err?.message || 'فشل الرد على المكالمة.');
+      setCallError({ type: 'answer-fail', message: err?.message || 'فشل الرد على المكالمة.' });
+      setCallState('error');
       rejectCall();
     }
   };

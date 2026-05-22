@@ -4,7 +4,24 @@ import { useCall } from '../contexts/CallContext';
 import { toggleTrack, switchCamera } from '../utils/webrtc-helpers';
 
 function VideoCall() {
-  const { callState, activeCallData, localStream, remoteStream, endCall, answerCall, incomingCallData, changeVideoQuality, peerRef } = useCall();
+  const { callState, activeCallData, localStream, remoteStream, endCall, answerCall, incomingCallData, changeVideoQuality, peerRef, callError } = useCall();
+    // Show error state for call rejection or timeout
+    if (callState === 'error' && callError) {
+      return (
+        <div className="fixed inset-0 bg-gray-900/90 z-40 flex flex-col items-center justify-center text-white dir-rtl" dir="rtl">
+          <div className="bg-gray-800 rounded-2xl p-8 flex flex-col items-center gap-6 shadow-2xl">
+            <h2 className="text-2xl font-bold mb-2">مشكلة في الاتصال</h2>
+            <p className="text-lg text-red-400">{callError.message}</p>
+            <button
+              className="px-6 py-2 rounded bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg mt-4"
+              onClick={endCall}
+            >
+              إغلاق
+            </button>
+          </div>
+        </div>
+      );
+    }
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   

@@ -1,4 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { Virtuoso } from 'react-virtuoso';
 import { useAuth } from '../context/AuthContext';
 import { useChats } from '../hooks/useChats';
 import { useMessages } from '../hooks/useMessages';
@@ -7,12 +8,13 @@ import { useMediaStorage } from '../hooks/useMediaStorage';
 import { listenToUserPresence, listenToTyping, setTypingStatus } from '../hooks/usePresence';
 import { buildNewestMessageKey, shouldIncrementNewMessageCount } from '../utils/chat-behavior';
 import { soundManager } from '../utils/sound-manager';
-import { LogOut, Plus, Search, Send, User, Paperclip, Image as ImageIcon, FileText, MapPin, Mic, Square, Loader, ArrowRight, Reply, Pencil, Trash2, X, Check, CheckCheck, ArrowDown, SlidersHorizontal } from 'lucide-react';
+import { LogOut, Plus, Search, Send, User, Paperclip, Image as ImageIcon, FileText, MapPin, Mic, Square, Loader, ArrowRight, Reply, Pencil, Trash2, X, ArrowDown, SlidersHorizontal } from 'lucide-react';
 
 // Call Components
 import CallButton from '../components/CallButton';
 import IncomingCallModal from '../components/IncomingCallModal';
 import VideoCall from '../components/VideoCall';
+import MessageBubble from '../components/MessageBubble';
 
 export default function ChatInterface() {
   const { currentUser, logout } = useAuth();
@@ -36,38 +38,20 @@ export default function ChatInterface() {
   const [swipeToastVisible, setSwipeToastVisible] = useState(false);
   const [highlightedMsgId, setHighlightedMsgId] = useState(null);
 
-  // Scroll to and highlight a message by id
-  // Scroll to a message by id, loading more if needed
-  const scrollToMessage = async (msgId, tryCount = 0) => {
-    if (!msgId) return;
-    const el = document.getElementById(`msg-${msgId}`);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      setHighlightedMsgId(msgId);
-      setTimeout(() => setHighlightedMsgId(null), 1400);
-      return;
-    }
-    // If not found, try loading more messages (pagination)
-    if (tryCount < 5 && hasMore && typeof loadMoreMessages === 'function') {
-      await loadMoreMessages();
-      setTimeout(() => scrollToMessage(msgId, tryCount + 1), 350);
-    }
-  };
-
   const fallbackAvatar = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%239ca3af'%3E%3Cpath d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3E%3C/svg%3E";
-  const handleImageError = (e) => {
+  const handleImageError = useCallback((e) => {
     e.target.onerror = null;
     e.target.src = fallbackAvatar;
-  };
+  }, [fallbackAvatar]);
 
-  const updateSoundSettings = (partial) => {
+  const updateSoundSettings = useCallback((partial) => {
     const next = soundManager.updateSettings(partial);
     setSoundSettings(next);
-  };
+  }, []);
 
-  const setVolumeLevel = (level) => {
+  const setVolumeLevel = useCallback((level) => {
     updateSoundSettings({ volumeLevel: level });
-  };
+  }, [updateSoundSettings]);
 
   const {
     messages,
@@ -81,10 +65,11 @@ export default function ChatInterface() {
     markAsRead
   } = useMessages(activeChatId);
   
-  const messagesEndRef = useRef(null);
+  const virtuosoRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const previousUnreadByChatRef = useRef({});
   const unreadTrackerInitializedRef = useRef(false);
+  const lastReadSyncKeyRef = useRef('');
   const initialScrollDoneRef = useRef(false);
   const userBrowsingHistoryRef = useRef(false);
   const lastNewestMessageKeyRef = useRef('');
@@ -102,43 +87,58 @@ export default function ChatInterface() {
   const longPressTimerRef = useRef(null);
   const swipeGestureRef = useRef({ messageId: null, startX: 0, startY: 0, triggered: false });
 
-  // Scroll to bottom helper (direct container scroll is more reliable than scrollIntoView).
-  const scrollToBottom = (smooth = true) => {
-    userBrowsingHistoryRef.current = false;
-    const el = messagesContainerRef.current;
-    if (!el) return;
+  // Scroll to and highlight a message by id
+  // Scroll to a message by id, loading more if needed
+  const scrollToMessage = useCallback(async (msgId, tryCount = 0) => {
+    if (!msgId) return;
 
-    const behavior = smooth ? 'smooth' : 'auto';
-    el.scrollTo({ top: el.scrollHeight, behavior });
-
-    // Retry after paint to handle async height changes (images/audio/layout).
-    requestAnimationFrame(() => {
-      const nextEl = messagesContainerRef.current;
-      if (!nextEl) return;
-      nextEl.scrollTo({ top: nextEl.scrollHeight, behavior: 'auto' });
-      requestAnimationFrame(() => {
-        const finalEl = messagesContainerRef.current;
-        if (!finalEl) return;
-        finalEl.scrollTop = finalEl.scrollHeight;
-      });
-    });
-
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'auto', block: 'end' });
+    const msgIndex = messages.findIndex((m) => m.id === msgId);
+    if (msgIndex >= 0 && virtuosoRef.current) {
+      virtuosoRef.current.scrollToIndex({ index: msgIndex, align: 'center', behavior: 'smooth' });
+      setHighlightedMsgId(msgId);
+      setTimeout(() => setHighlightedMsgId(null), 1400);
+      return;
     }
+
+    const el = document.getElementById(`msg-${msgId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setHighlightedMsgId(msgId);
+      setTimeout(() => setHighlightedMsgId(null), 1400);
+      return;
+    }
+
+    // If not found, try loading more messages (pagination)
+    if (tryCount < 5 && hasMore && typeof loadMoreMessages === 'function') {
+      await loadMoreMessages();
+      setTimeout(() => {
+        scrollToMessage(msgId, tryCount + 1);
+      }, 350);
+    }
+  }, [messages, hasMore, loadMoreMessages]);
+
+  // Scroll to bottom helper (direct container scroll is more reliable than scrollIntoView).
+  const scrollToBottom = useCallback((smooth = true) => {
+    userBrowsingHistoryRef.current = false;
+    if (!messages.length || !virtuosoRef.current) return;
+    virtuosoRef.current.scrollToIndex({
+      index: messages.length - 1,
+      align: 'end',
+      behavior: smooth ? 'smooth' : 'auto'
+    });
 
     // Ensure the flag stays in sync after layout settles.
     requestAnimationFrame(() => {
       const latestEl = messagesContainerRef.current;
       if (!latestEl) return;
-      const atBottom = latestEl.scrollHeight - latestEl.scrollTop - latestEl.clientHeight < 80;
+      const atBottom = latestEl.scrollHeight - latestEl.scrollTop - latestEl.clientHeight < 100;
       userBrowsingHistoryRef.current = !atBottom;
       if (atBottom) {
         setNewMsgWhileAway(false);
         setNewMsgCount(0);
       }
     });
-  };
+  }, [messages.length]);
 
   // Auto scroll on genuinely new latest message unless user is browsing old messages.
   useEffect(() => {
@@ -222,30 +222,20 @@ export default function ChatInterface() {
     initialScrollDoneRef.current = true;
   }, [activeChatId, msgsLoading, messages.length]);
 
-  // Show/hide scroll-to-bottom button on scroll
-  useEffect(() => {
-    const el = messagesContainerRef.current;
-    if (!el) return;
-    const handle = () => {
-      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-      const atBottom = distanceFromBottom < 80;
-      userBrowsingHistoryRef.current = distanceFromBottom > 120;
-      setShowScrollToBottom(!atBottom);
-      if (atBottom) {
-        setNewMsgWhileAway(false);
-        setNewMsgCount(0);
-      }
-    };
-    el.addEventListener('scroll', handle);
-    handle();
-    return () => el.removeEventListener('scroll', handle);
-  }, [activeChatId]);
+  const handleAtBottomStateChange = useCallback((atBottom) => {
+    userBrowsingHistoryRef.current = !atBottom;
+    setShowScrollToBottom(!atBottom);
+    if (atBottom) {
+      setNewMsgWhileAway(false);
+      setNewMsgCount(0);
+    }
+  }, []);
 
-  const handleScroll = (e) => {
-    if (e.target.scrollTop <= 2 && hasMore && !msgsLoading) {
+  const handleStartReached = useCallback(() => {
+    if (hasMore && !msgsLoading) {
       loadMoreMessages();
     }
-  };
+  }, [hasMore, msgsLoading, loadMoreMessages]);
 
   const handleSendMessage = async (e) => {
     e.preventDefault();
@@ -287,7 +277,7 @@ export default function ChatInterface() {
     });
   };
 
-  const handleMessageInputChange = (value) => {
+  const handleMessageInputChange = useCallback((value) => {
     setMessageText(value);
     if (!activeChatId || !currentUser?.uid) return;
 
@@ -300,56 +290,56 @@ export default function ChatInterface() {
     typingTimeoutRef.current = setTimeout(() => {
       setTypingStatus(activeChatId, currentUser.uid, false).catch(() => {});
     }, 1200);
-  };
+  }, [activeChatId, currentUser?.uid]);
 
-  const toReplyPreview = (msg) => ({
+  const toReplyPreview = useCallback((msg) => ({
     messageId: msg.id,
     senderId: msg.senderId,
     textPreview: msg.isDeleted ? 'تم حذف هذه الرسالة' : (msg.text || '[مرفق]'),
     type: msg.type || 'text'
-  });
+  }), []);
 
-  const handleReplyToMessage = (msg) => {
+  const handleReplyToMessage = useCallback((msg) => {
     setEditingMessageId(null);
     setReplyingTo(toReplyPreview(msg));
     setActionMenuMessage(null);
-  };
+  }, [toReplyPreview]);
 
-  const handleEditMessage = (msg) => {
+  const handleEditMessage = useCallback((msg) => {
     setReplyingTo(null);
     setEditingMessageId(msg.id);
     setMessageText(msg.text || '');
     setActionMenuMessage(null);
-  };
+  }, []);
 
-  const handleDeleteMessage = async (msg) => {
+  const handleDeleteMessage = useCallback(async (msg) => {
     await deleteMessage(msg.id);
     if (editingMessageId === msg.id) {
       setEditingMessageId(null);
       setMessageText('');
     }
     setActionMenuMessage(null);
-  };
+  }, [deleteMessage, editingMessageId]);
 
-  const clearLongPressTimer = () => {
+  const clearLongPressTimer = useCallback(() => {
     if (longPressTimerRef.current) {
       clearTimeout(longPressTimerRef.current);
       longPressTimerRef.current = null;
     }
-  };
+  }, []);
 
-  const handleMessageTouchStart = (msg) => {
+  const handleMessageTouchStart = useCallback((msg) => {
     clearLongPressTimer();
     longPressTimerRef.current = setTimeout(() => {
       setActionMenuMessage(msg);
     }, 450);
-  };
+  }, [clearLongPressTimer]);
 
-  const handleMessageTouchEnd = () => {
+  const handleMessageTouchEnd = useCallback(() => {
     clearLongPressTimer();
-  };
+  }, [clearLongPressTimer]);
 
-  const handleSwipeStart = (event, msg) => {
+  const handleSwipeStart = useCallback((event, msg) => {
     const touch = event.touches?.[0];
     if (!touch) return;
     setSwipePreview({ messageId: msg.id, offsetX: 0 });
@@ -359,9 +349,9 @@ export default function ChatInterface() {
       startY: touch.clientY,
       triggered: false
     };
-  };
+  }, []);
 
-  const handleSwipeMove = (event, msg) => {
+  const handleSwipeMove = useCallback((event, msg) => {
     const touch = event.touches?.[0];
     if (!touch) return;
 
@@ -391,21 +381,21 @@ export default function ChatInterface() {
       setSwipeToast('تم اختيار الرسالة للرد');
       if (navigator.vibrate) navigator.vibrate(10);
     }
-  };
+  }, [clearLongPressTimer, handleReplyToMessage]);
 
-  const handleSwipeEnd = () => {
+  const handleSwipeEnd = useCallback(() => {
     setSwipePreview({ messageId: null, offsetX: 0 });
     swipeGestureRef.current = { messageId: null, startX: 0, startY: 0, triggered: false };
-    clearLongPressTimer();
-  };
+    handleMessageTouchEnd();
+  }, [handleMessageTouchEnd]);
 
-  const handleStartChat = async (otherUser) => {
+  const handleStartChat = useCallback(async (otherUser) => {
     const chatId = await startChat(otherUser);
     if (chatId) {
       setActiveChatId(chatId);
       setShowUsersList(false);
     }
-  };
+  }, [startChat]);
 
   // ----- MEDIA HANDLING -----
   const handleFileUpload = async (e, type) => {
@@ -488,7 +478,7 @@ export default function ChatInterface() {
     return chat.participantDetails[otherId];
   };
 
-  const renderMessageContent = (msg, isMe) => {
+  const renderMessageContent = useCallback((msg, isMe) => {
     if (msg.isDeleted) {
       return <p className="text-sm italic opacity-80">{isMe ? 'حذفت هذه الرسالة' : 'رسالة محذوفة'}</p>;
     }
@@ -527,7 +517,7 @@ export default function ChatInterface() {
       default:
         return <p className="text-sm whitespace-pre-wrap break-words">{msg.text}</p>;
     }
-  };
+  }, []);
 
   const activeChatDetails = chats.find(c => c.id === activeChatId);
   const activeChatOtherUser = getOtherParticipant(activeChatDetails);
@@ -557,9 +547,35 @@ export default function ChatInterface() {
   }, [activeChatId, activeChatOtherUser?.uid]);
 
   useEffect(() => {
-    if (!activeChatId || !currentUser?.uid) return;
-    markAsRead();
-  }, [activeChatId, currentUser?.uid, messages.length]);
+    if (!activeChatId || !currentUser?.uid || !messages.length) return;
+
+    const latestUnreadIncoming = [...messages]
+      .reverse()
+      .find((m) => m.senderId !== currentUser.uid && !m._localOnly && !m.seenTo?.[currentUser.uid]);
+
+    if (!latestUnreadIncoming) return;
+
+    const ts = latestUnreadIncoming.timestamp?.toMillis ? latestUnreadIncoming.timestamp.toMillis() : 0;
+    const syncKey = `${activeChatId}:${latestUnreadIncoming.id || latestUnreadIncoming.clientMessageId || 'unknown'}:${ts}`;
+    if (lastReadSyncKeyRef.current === syncKey) return;
+    lastReadSyncKeyRef.current = syncKey;
+
+    if (typeof window.requestIdleCallback === 'function') {
+      const idleId = window.requestIdleCallback(() => {
+        markAsRead();
+      });
+      return () => window.cancelIdleCallback(idleId);
+    }
+
+    const timeoutId = setTimeout(() => {
+      markAsRead();
+    }, 80);
+    return () => clearTimeout(timeoutId);
+  }, [activeChatId, currentUser?.uid, messages, markAsRead]);
+
+  useEffect(() => {
+    lastReadSyncKeyRef.current = '';
+  }, [activeChatId]);
 
   useEffect(() => {
     if (!swipeToast) return;
@@ -608,7 +624,7 @@ export default function ChatInterface() {
     return <p className="text-xs text-gray-500">آخر ظهور: {isToday ? 'اليوم' : date.toLocaleDateString()} {timeStr}</p>;
   };
 
-  const getMessageDeliveryState = (msg, isMe) => {
+  const getMessageDeliveryState = useCallback((msg, isMe) => {
     if (!isMe) return null;
 
     if (msg.status === 'sending') return 'sending';
@@ -620,16 +636,16 @@ export default function ChatInterface() {
     if (msg.seenTo?.[otherUserId]) return 'seen';
     if (msg.deliveredTo?.[otherUserId]) return 'delivered';
     return 'sent';
-  };
+  }, [activeChatOtherUser?.uid, activeChatDetails?.participants, currentUser?.uid]);
 
-  const formatReceiptTime = (ts) => {
+  const formatReceiptTime = useCallback((ts) => {
     if (!ts?.toDate) return '';
     const d = ts.toDate();
     if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '';
     return d.toLocaleString([], { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
-  };
+  }, []);
 
-  const getDeliveryTitle = (msg, state, isMe) => {
+  const getDeliveryTitle = useCallback((msg, state, isMe) => {
     if (!isMe) return '';
     const otherUserId = activeChatOtherUser?.uid || activeChatDetails?.participants?.find((id) => id !== currentUser.uid);
     if (!otherUserId) return '';
@@ -643,7 +659,106 @@ export default function ChatInterface() {
       return deliveredAt ? `تم التسليم: ${deliveredAt}` : 'تم التسليم';
     }
     return '';
-  };
+  }, [activeChatOtherUser?.uid, activeChatDetails?.participants, currentUser?.uid, formatReceiptTime]);
+
+  const handleBubbleContextMenu = useCallback((e, targetMsg, allowed) => {
+    e.preventDefault();
+    if (allowed) {
+      setActionMenuMessage(targetMsg);
+    }
+  }, []);
+
+  const handleBubbleTouchStart = useCallback((e, targetMsg, allowed) => {
+    if (!allowed) return;
+    handleSwipeStart(e, targetMsg);
+    handleMessageTouchStart(targetMsg);
+  }, [handleMessageTouchStart, handleSwipeStart]);
+
+  const handleBubbleTouchMove = useCallback((e, targetMsg, allowed) => {
+    if (!allowed) return;
+    handleSwipeMove(e, targetMsg);
+  }, [handleSwipeMove]);
+
+  const setMessagesScrollerRef = useCallback((ref) => {
+    if (ref) {
+      messagesContainerRef.current = ref;
+    }
+  }, []);
+
+  const virtuosoComponents = useMemo(() => ({
+    Header: () => (
+      hasMore ? (
+        <div className="text-center py-2">
+          <span className="text-xs bg-white text-gray-500 px-3 py-1 rounded-full shadow-sm cursor-pointer hover:bg-gray-50" onClick={loadMoreMessages}>
+            {msgsLoading ? 'جاري التحميل...' : 'تحميل رسائل أقدم'}
+          </span>
+        </div>
+      ) : null
+    ),
+    Footer: () => (
+      uploading ? (
+        <div className="flex justify-end py-2">
+          <div className="p-3 rounded-lg bg-blue-100 text-blue-800 rounded-tr-none flex items-center gap-2">
+            <Loader size={16} className="animate-spin" />
+            <span className="text-sm">جاري الإرسال ({Math.round(progress)}%)</span>
+          </div>
+        </div>
+      ) : <div className="h-2" />
+    )
+  }), [hasMore, loadMoreMessages, msgsLoading, progress, uploading]);
+
+  const renderVirtualMessage = useCallback((index, msg) => {
+    const isMe = msg.senderId === currentUser.uid;
+    const timeString = msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '';
+    const deliveryState = getMessageDeliveryState(msg, isMe);
+    const deliveryTitle = getDeliveryTitle(msg, deliveryState, isMe);
+    const canShowActions = !msg._localOnly && !msg.isDeleted;
+    const isSwipingThis = swipePreview.messageId === msg.id;
+    const swipeOffset = isSwipingThis ? swipePreview.offsetX : 0;
+    const swipeStrength = Math.min(1, Math.abs(swipeOffset) / 72);
+
+    return (
+      <MessageBubble
+        key={msg.id || index}
+        msg={msg}
+        isMe={isMe}
+        timeString={timeString}
+        deliveryState={deliveryState}
+        deliveryTitle={deliveryTitle}
+        highlighted={highlightedMsgId === msg.id}
+        swipeOffset={swipeOffset}
+        swipeStrength={swipeStrength}
+        canShowActions={canShowActions}
+        renderMessageContent={renderMessageContent}
+        onContextMenu={handleBubbleContextMenu}
+        onTouchStart={handleBubbleTouchStart}
+        onTouchMove={handleBubbleTouchMove}
+        onTouchEnd={handleSwipeEnd}
+        onReply={handleReplyToMessage}
+        onEdit={handleEditMessage}
+        onDelete={handleDeleteMessage}
+        onRetry={retryMessage}
+        onJumpToReply={scrollToMessage}
+      />
+    );
+  }, [
+    currentUser.uid,
+    getDeliveryTitle,
+    getMessageDeliveryState,
+    handleBubbleContextMenu,
+    handleBubbleTouchMove,
+    handleBubbleTouchStart,
+    handleDeleteMessage,
+    handleEditMessage,
+    handleReplyToMessage,
+    handleSwipeEnd,
+    highlightedMsgId,
+    renderMessageContent,
+    retryMessage,
+    scrollToMessage,
+    swipePreview.messageId,
+    swipePreview.offsetX
+  ]);
 
   return (
     <div className="flex h-dvh md:h-screen overflow-hidden bg-gray-100 font-sans dir-rtl text-right" dir="rtl">
@@ -768,147 +883,18 @@ export default function ChatInterface() {
               />
             </header>
 
-            <div ref={messagesContainerRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 relative">
-              {hasMore && (
-                <div className="text-center py-2">
-                  <span className="text-xs bg-white text-gray-500 px-3 py-1 rounded-full shadow-sm cursor-pointer hover:bg-gray-50" onClick={loadMoreMessages}>
-                    {msgsLoading ? 'جاري التحميل...' : 'تحميل رسائل أقدم'}
-                  </span>
-                </div>
-              )}
-
-              {messages.map((msg, idx) => {
-                const isMe = msg.senderId === currentUser.uid;
-                const timeString = msg.timestamp?.toDate().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) || '';
-                const isFailed = msg.status === 'failed';
-                const isSending = msg.status === 'sending';
-                const isSentPendingAck = msg.status === 'sent' && msg._localOnly;
-                const deliveryState = getMessageDeliveryState(msg, isMe);
-                const deliveryTitle = getDeliveryTitle(msg, deliveryState, isMe);
-                const canShowActions = !msg._localOnly && !msg.isDeleted;
-                const isSwipingThis = swipePreview.messageId === msg.id;
-                const swipeOffset = isSwipingThis ? swipePreview.offsetX : 0;
-                const swipeStrength = Math.min(1, Math.abs(swipeOffset) / 72);
-                
-                return (
-                  <div
-                    key={msg.id || idx}
-                    id={`msg-${msg.id}`}
-                    className={`flex ${isMe ? 'justify-end' : 'justify-start'} relative`}
-                  >
-                    {isSwipingThis && Math.abs(swipeOffset) > 8 && (
-                      <div
-                        className={`absolute top-1/2 -translate-y-1/2 ${isMe ? 'left-2' : 'right-2'} text-blue-500`}
-                        style={{ opacity: swipeStrength }}
-                      >
-                        <Reply size={18} />
-                      </div>
-                    )}
-                    <div
-                      className={`p-3 rounded-lg max-w-[75%] md:max-w-md relative ${isMe ? 'bg-blue-500 text-white rounded-tr-none' : 'bg-white text-gray-800 shadow-sm rounded-tl-none'} ${highlightedMsgId === msg.id ? 'ring-2 ring-yellow-400 ring-offset-2 animate-pulse' : ''}`}
-                      style={{ transform: `translateX(${swipeOffset}px)`, transition: isSwipingThis ? 'none' : 'transform 180ms ease-out' }}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        if (canShowActions) setActionMenuMessage(msg);
-                      }}
-                      onTouchStart={(e) => {
-                        if (!canShowActions) return;
-                        handleSwipeStart(e, msg);
-                        handleMessageTouchStart(msg);
-                      }}
-                      onTouchMove={(e) => {
-                        if (!canShowActions) return;
-                        handleSwipeMove(e, msg);
-                      }}
-                      onTouchEnd={handleSwipeEnd}
-                      onTouchCancel={handleSwipeEnd}
-                    >
-                      {msg.replyTo && (
-                        <div
-                          className={`mb-2 p-2 rounded border-r-2 text-xs cursor-pointer transition ${isMe ? 'bg-blue-400/50 border-white/60' : 'bg-gray-100 border-blue-400 text-gray-700'} hover:bg-blue-200/60`}
-                          onClick={() => scrollToMessage(msg.replyTo.messageId)}
-                          title="انتقل للرسالة الأصلية"
-                        >
-                          <p className="font-semibold mb-1">رد على رسالة</p>
-                          <p className="truncate">{msg.replyTo.textPreview || '[رسالة]'}</p>
-                        </div>
-                      )}
-
-                      {renderMessageContent(msg, isMe)}
-                      <div className={`text-[10px] mt-1 text-left flex items-center gap-2 ${isMe ? 'text-blue-200' : 'text-gray-400'}`}>
-                        <span>{timeString}</span>
-                        {!msg.isDeleted && msg.isEdited && <span>(معدلة)</span>}
-                        {isMe && isSending && <span>جاري الإرسال...</span>}
-                        {isMe && isSentPendingAck && <span>تم الإرسال</span>}
-                        {isMe && !isSending && !isFailed && !isSentPendingAck && deliveryState === 'sent' && (
-                          <span className="inline-flex items-center gap-1"><Check size={12} /> <span>مرسلة</span></span>
-                        )}
-                        {isMe && !isSending && !isFailed && !isSentPendingAck && deliveryState === 'delivered' && (
-                          <span className="inline-flex items-center gap-1" title={deliveryTitle}><CheckCheck size={12} /> <span>تم التسليم</span></span>
-                        )}
-                        {isMe && !isSending && !isFailed && !isSentPendingAck && deliveryState === 'seen' && (
-                          <span className="inline-flex items-center gap-1 text-cyan-200" title={deliveryTitle}><CheckCheck size={12} /> <span>تمت القراءة</span></span>
-                        )}
-                        {isMe && isFailed && (
-                          <>
-                            <span className="text-red-200">فشل الإرسال</span>
-                            <button
-                              type="button"
-                              onClick={() => retryMessage(msg.id)}
-                              className="underline text-red-100 hover:text-white"
-                            >
-                              إعادة المحاولة
-                            </button>
-                          </>
-                        )}
-                      </div>
-
-                      {canShowActions && (
-                        <div className={`mt-2 hidden md:flex gap-2 ${isMe ? 'justify-end' : 'justify-start'}`}>
-                          <button
-                            type="button"
-                            onClick={() => handleReplyToMessage(msg)}
-                            className={`text-[11px] inline-flex items-center gap-1 ${isMe ? 'text-blue-100 hover:text-white' : 'text-gray-500 hover:text-gray-700'}`}
-                          >
-                            <Reply size={12} />
-                            <span>رد</span>
-                          </button>
-                          {isMe && msg.type === 'text' && (
-                            <button
-                              type="button"
-                              onClick={() => handleEditMessage(msg)}
-                              className="text-[11px] inline-flex items-center gap-1 text-blue-100 hover:text-white"
-                            >
-                              <Pencil size={12} />
-                              <span>تعديل</span>
-                            </button>
-                          )}
-                          {isMe && (
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteMessage(msg)}
-                              className="text-[11px] inline-flex items-center gap-1 text-red-100 hover:text-white"
-                            >
-                              <Trash2 size={12} />
-                              <span>حذف</span>
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-              
-              {uploading && (
-                <div className="flex justify-end">
-                  <div className="p-3 rounded-lg bg-blue-100 text-blue-800 rounded-tr-none flex items-center gap-2">
-                    <Loader size={16} className="animate-spin" />
-                    <span className="text-sm">جاري الإرسال ({Math.round(progress)}%)</span>
-                  </div>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
+            <div className="flex-1 min-h-0 relative overflow-x-hidden">
+              <Virtuoso
+                ref={virtuosoRef}
+                data={messages}
+                style={{ height: '100%' }}
+                className="overscroll-contain overflow-x-hidden px-4 py-2"
+                atBottomStateChange={handleAtBottomStateChange}
+                startReached={handleStartReached}
+                scrollerRef={setMessagesScrollerRef}
+                components={virtuosoComponents}
+                itemContent={renderVirtualMessage}
+              />
             </div>
 
             <footer className="sticky bottom-0 p-4 bg-gray-50 flex items-center z-20 border-t border-gray-200">

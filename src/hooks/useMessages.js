@@ -27,6 +27,8 @@ export function useMessages(chatId) {
   const lastDocRef = useRef(null);
   const receiptsUpdatingRef = useRef(false);
   const seenUpdatingRef = useRef(false);
+  const markAsReadInFlightRef = useRef(false);
+  const lastMarkAsReadAtRef = useRef(0);
   
   const MESSAGES_LIMIT = 20;
 
@@ -390,8 +392,14 @@ export function useMessages(chatId) {
 
   const markAsRead = async () => {
     if (!chatId || !currentUser) return;
+    if (markAsReadInFlightRef.current) return;
+
+    const now = Date.now();
+    // Avoid excessive writes during rapid snapshot updates.
+    if (now - lastMarkAsReadAtRef.current < 450) return;
 
     try {
+      markAsReadInFlightRef.current = true;
       const chatRef = doc(db, 'chats', chatId);
       await updateDoc(chatRef, {
         [`unreadCount.${currentUser.uid}`]: 0,
@@ -424,6 +432,9 @@ export function useMessages(chatId) {
       }
     } catch (error) {
       console.error('Failed to mark chat as read:', error);
+    } finally {
+      markAsReadInFlightRef.current = false;
+      lastMarkAsReadAtRef.current = Date.now();
     }
   };
 

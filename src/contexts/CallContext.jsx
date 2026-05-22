@@ -256,6 +256,13 @@ export function CallProvider({ children }) {
       return;
     }
 
+    // Ensure there is only one active peer/listener set at a time.
+    if (peerRef.current) {
+      if (peerRef.current._cleanupSignal) peerRef.current._cleanupSignal();
+      peerRef.current.destroy();
+      peerRef.current = null;
+    }
+
     const peer = new Peer({
       initiator,
       trickle: true,
@@ -275,6 +282,7 @@ export function CallProvider({ children }) {
     });
 
     peer.on('close', () => {
+      if (peer._cleanupSignal) peer._cleanupSignal();
       cleanupCall();
     });
 
@@ -283,14 +291,24 @@ export function CallProvider({ children }) {
       if (msg.includes('close called') || msg.includes('user-initiated abort')) {
         return;
       }
+      if (peer._cleanupSignal) peer._cleanupSignal();
       console.error("Peer error:", err);
       cleanupCall();
     });
 
     // Handle incoming signaling data
     const handleSignal = (data) => {
-      if (data.senderId === targetUserId) {
+      if (data.senderId !== targetUserId) return;
+      if (!peer || peer.destroyed) return;
+
+      try {
         peer.signal(data.signal);
+      } catch (err) {
+        const msg = String(err?.message || '').toLowerCase();
+        if (msg.includes('cannot signal after peer is destroyed')) {
+          return;
+        }
+        console.error('Signal handling error:', err);
       }
     };
     socket.on('signal', handleSignal);

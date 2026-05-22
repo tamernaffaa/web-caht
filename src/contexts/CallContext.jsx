@@ -100,6 +100,10 @@ export function CallProvider({ children }) {
       timeout = setTimeout(() => {
         soundManager.stopAllRingtones();
         soundManager.playCallEnded();
+        // Notify remote user to close incoming call UI
+        if (activeCallRef.current && emitIfConnected) {
+          emitIfConnected('end-call', { roomId: activeCallRef.current.roomId });
+        }
         setCallError({ type: 'timeout', message: 'تعذر الاتصال بالطرف الآخر. قد يكون غير متصل بالإنترنت أو لم يرد.' });
         setCallState('error');
         cleanupCall();

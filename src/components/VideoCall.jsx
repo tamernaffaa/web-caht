@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Mic, MicOff, Video, VideoOff, PhoneOff, Maximize, Minimize, Camera } from 'lucide-react';
+import { Mic, MicOff, Video, VideoOff, PhoneOff, Maximize, Minimize, Camera, Settings, X } from 'lucide-react';
 import { useCall } from '../contexts/CallContext';
 import { toggleTrack, switchCamera } from '../utils/webrtc-helpers';
 
@@ -31,6 +31,7 @@ function VideoCall() {
   const [timer, setTimer] = useState(0);
   const [videoQuality, setVideoQuality] = useState('auto');
   const [isApplyingQuality, setIsApplyingQuality] = useState(false);
+  const [showQualityMenu, setShowQualityMenu] = useState(false);
 
   // Set video sources
   useEffect(() => {
@@ -240,28 +241,51 @@ function VideoCall() {
         </button>
       </div>
 
+      {/* Floating settings button */}
       {activeCallData?.isVideo && localStream && (
-        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 bg-black/45 rounded-xl px-3 py-2">
-          <select
-            className="p-2 rounded bg-gray-800 text-white focus:outline-none"
-            value={videoQuality}
-            onChange={e => setVideoQuality(e.target.value)}
-            disabled={isApplyingQuality}
-            title="اختيار جودة الفيديو"
-          >
-            <option value="auto">تلقائي</option>
-            <option value="low">منخفضة</option>
-            <option value="medium">متوسطة</option>
-            <option value="high">عالية</option>
-          </select>
+        <>
           <button
-            onClick={handleApplyVideoQuality}
-            disabled={isApplyingQuality}
-            className="px-3 py-2 rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white"
+            className="fixed bottom-28 right-8 z-30 bg-white/20 backdrop-blur-md border border-white/30 shadow-xl rounded-full p-3 hover:bg-white/40 transition-all"
+            style={{boxShadow: '0 4px 24px 0 rgba(0,0,0,0.12)'}}
+            onClick={() => setShowQualityMenu(v => !v)}
+            title="إعدادات جودة الفيديو"
           >
-            {isApplyingQuality ? 'جاري التطبيق...' : 'تطبيق'}
+            <Settings className="w-6 h-6 text-white drop-shadow" />
           </button>
-        </div>
+
+          {showQualityMenu && (
+            <div
+              className="fixed bottom-40 right-8 z-40 flex flex-col gap-4 p-5 rounded-2xl border border-white/30 bg-white/20 backdrop-blur-xl shadow-2xl min-w-[220px]"
+              style={{boxShadow: '0 8px 32px 0 rgba(0,0,0,0.18)'}}
+            >
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-white font-bold text-lg">جودة الفيديو</span>
+                <button onClick={() => setShowQualityMenu(false)} className="p-1 rounded hover:bg-white/30">
+                  <X className="w-5 h-5 text-white" />
+                </button>
+              </div>
+              <select
+                className="p-2 rounded bg-gray-800/80 text-white focus:outline-none w-full"
+                value={videoQuality}
+                onChange={e => setVideoQuality(e.target.value)}
+                disabled={isApplyingQuality}
+                title="اختيار جودة الفيديو"
+              >
+                <option value="auto">تلقائي</option>
+                <option value="low">منخفضة</option>
+                <option value="medium">متوسطة</option>
+                <option value="high">عالية</option>
+              </select>
+              <button
+                onClick={handleApplyVideoQuality}
+                disabled={isApplyingQuality}
+                className="w-full px-3 py-2 rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold mt-2"
+              >
+                {isApplyingQuality ? 'جاري التطبيق...' : 'تطبيق'}
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

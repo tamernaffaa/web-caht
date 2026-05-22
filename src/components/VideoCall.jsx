@@ -3,6 +3,7 @@ import { Mic, MicOff, Video, VideoOff, PhoneOff, Maximize, Minimize, Camera } fr
 import { useCall } from '../contexts/CallContext';
 import { toggleTrack, switchCamera } from '../utils/webrtc-helpers';
 
+function VideoCall() {
   const { callState, activeCallData, localStream, remoteStream, endCall, startCall, answerCall, incomingCallData } = useCall();
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
@@ -14,7 +15,6 @@ import { toggleTrack, switchCamera } from '../utils/webrtc-helpers';
   const [videoQuality, setVideoQuality] = useState('auto');
   // Handle quality change and restart stream if needed (future: hot switch)
   // For now, only used at call start/answer
-
 
   // Set video sources
   useEffect(() => {
@@ -70,7 +70,6 @@ import { toggleTrack, switchCamera } from '../utils/webrtc-helpers';
       setIsFullscreen(false);
     }
   };
-
 
   // Show quality selector before answering/initiating
   if (callState === 'ringing' && incomingCallData) {
@@ -231,3 +230,4 @@ import { toggleTrack, switchCamera } from '../utils/webrtc-helpers';
     </div>
   );
 }
+export default VideoCall;

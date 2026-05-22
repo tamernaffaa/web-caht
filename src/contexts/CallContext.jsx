@@ -136,19 +136,23 @@ export function CallProvider({ children }) {
     soundManager.stopAllRingtones();
 
     try {
-      const stream = await getUserMediaStream(acceptVideo);
+      const wantsVideo = acceptVideo !== false;
+      const mediaOptions = wantsVideo
+        ? (typeof acceptVideo === 'object' ? acceptVideo : true)
+        : false;
+      const stream = await getUserMediaStream(mediaOptions);
       setLocalStream(stream);
       localStreamRef.current = stream;
       setActiveCallData({
         roomId: incomingCallData.roomId,
         targetUserId: incomingCallData.caller.uid,
-        isVideo: acceptVideo,
+        isVideo: wantsVideo,
         otherUserName: incomingCallData.caller.name
       });
       activeCallRef.current = {
         roomId: incomingCallData.roomId,
         targetUserId: incomingCallData.caller.uid,
-        isVideo: acceptVideo,
+        isVideo: wantsVideo,
         otherUserName: incomingCallData.caller.name
       };
 
@@ -201,6 +205,46 @@ export function CallProvider({ children }) {
     soundManager.stopAllRingtones();
     soundManager.playCallEnded();
     cleanupCall();
+  };
+
+  const changeVideoQuality = async (quality = 'auto') => {
+    const stream = localStreamRef.current;
+    if (!stream) return false;
+
+    const oldVideoTrack = stream.getVideoTracks()[0];
+    if (!oldVideoTrack) return false;
+
+    const facingMode = oldVideoTrack.getSettings?.().facingMode || 'user';
+
+    try {
+      const freshStream = await getUserMediaStream({ quality, facingMode });
+      const newVideoTrack = freshStream.getVideoTracks()[0];
+
+      if (!newVideoTrack) {
+        throw new Error('تعذر الحصول على مسار فيديو جديد.');
+      }
+
+      // Keep current user video on/off state.
+      newVideoTrack.enabled = oldVideoTrack.enabled;
+
+      if (peerRef.current && typeof peerRef.current.replaceTrack === 'function') {
+        peerRef.current.replaceTrack(oldVideoTrack, newVideoTrack, stream);
+      }
+
+      stream.removeTrack(oldVideoTrack);
+      oldVideoTrack.stop();
+      stream.addTrack(newVideoTrack);
+
+      // We only need the new video track from this temporary stream.
+      freshStream.getAudioTracks().forEach(track => track.stop());
+
+      setLocalStream(stream);
+      localStreamRef.current = stream;
+      return true;
+    } catch (err) {
+      console.error('Failed to change video quality:', err);
+      return false;
+    }
   };
 
   // --------------------------
@@ -286,6 +330,7 @@ export function CallProvider({ children }) {
     remoteStream,
     startCall,
     answerCall,
+    changeVideoQuality,
     rejectCall,
     endCall
   };
